@@ -45,6 +45,7 @@ class GalTvGuideRow {
     required this.channelName,
     required this.entries,
     this.logoUrl,
+    this.leadingMs = 0,
   });
 
   final String channelId;
@@ -56,6 +57,15 @@ class GalTvGuideRow {
   final String? logoUrl;
 
   final List<GalTvGuideEntry> entries;
+
+  /// How far this row's first cell sits from the fetched window's start.
+  ///
+  /// Every row is clamped to the *same* window, so the same `x` is the same time
+  /// on every row — the grid's whole point. A channel whose schedule has a gap at
+  /// the window start therefore needs a leading spacer (this value) or its first
+  /// cell would land at `x` = the window start and every later cell would be early
+  /// on that row alone.
+  final int leadingMs;
 }
 
 /// Map Tunarr's `/api/channels/all/lineups` payload into guide rows.
@@ -64,30 +74,73 @@ class GalTvGuideRow {
 /// `native-playback` join key), and mark which cell is "now" — Tunarr's slot
 /// `id` equals `current.programId`, so the match is exact rather than
 /// time-derived.
+///
+/// [windowStart] / [windowEnd] are the range the tab actually fetched. Every row
+/// is clamped to that window so the rows share one time origin: a slot that began
+/// before the window (or runs past it) is cut to the window edge, and a slot
+/// entirely outside is dropped. Without this each row started at its own first
+/// programme, so the same `x` was a different time on every channel and no ruler
+/// above the grid could be honest. The amount a row is short at the start is
+/// recorded as [GalTvGuideRow.leadingMs].
 List<GalTvGuideRow> galTvGuideRows({
   required List<TunarrLineupChannel> channels,
+  required DateTime windowStart,
+  required DateTime windowEnd,
   String? currentChannelId,
   String? currentProgramId,
   String? Function(String? iconPath)? resolveLogoUrl,
 }) {
+  final windowStartMs = windowStart.millisecondsSinceEpoch;
+  final windowEndMs = windowEnd.millisecondsSinceEpoch;
   return [
     for (final channel in channels)
-      GalTvGuideRow(
-        channelId: channel.id,
-        channelNumber: channel.number,
-        channelName: channel.name,
-        logoUrl: resolveLogoUrl?.call(channel.iconPath),
-        entries: [
-          for (final slot in channel.slots)
-            GalTvGuideEntry(
-              title: slot.program?.title ?? slot.type,
-              start: DateTime.fromMillisecondsSinceEpoch(slot.start),
-              stop: DateTime.fromMillisecondsSinceEpoch(slot.stop),
-              ratingKey: slot.isPlayable ? slot.program?.externalId : null,
-              isPlayable: slot.isPlayable,
-              isCurrent: channel.id == currentChannelId && slot.id == currentProgramId,
-            ),
-        ],
+      _guideRow(
+        channel: channel,
+        windowStartMs: windowStartMs,
+        windowEndMs: windowEndMs,
+        currentChannelId: currentChannelId,
+        currentProgramId: currentProgramId,
+        resolveLogoUrl: resolveLogoUrl,
       ),
   ];
+}
+
+GalTvGuideRow _guideRow({
+  required TunarrLineupChannel channel,
+  required int windowStartMs,
+  required int windowEndMs,
+  required String? currentChannelId,
+  required String? currentProgramId,
+  required String? Function(String? iconPath)? resolveLogoUrl,
+}) {
+  final entries = <GalTvGuideEntry>[];
+  for (final slot in channel.slots) {
+    final start = slot.start < windowStartMs ? windowStartMs : slot.start;
+    final stop = slot.stop > windowEndMs ? windowEndMs : slot.stop;
+    // Entirely outside the window: it has no place on a time-aligned row.
+    if (stop <= start) continue;
+    entries.add(
+      GalTvGuideEntry(
+        title: slot.program?.title ?? slot.type,
+        start: DateTime.fromMillisecondsSinceEpoch(start),
+        stop: DateTime.fromMillisecondsSinceEpoch(stop),
+        ratingKey: slot.isPlayable ? slot.program?.externalId : null,
+        isPlayable: slot.isPlayable,
+        isCurrent: channel.id == currentChannelId && slot.id == currentProgramId,
+      ),
+    );
+  }
+
+  // Slots arrive in schedule order, so the first kept entry is the earliest:
+  // whatever it was cut by is the gap this row has at the window start.
+  final leadingMs = entries.isEmpty ? 0 : entries.first.start.millisecondsSinceEpoch - windowStartMs;
+
+  return GalTvGuideRow(
+    channelId: channel.id,
+    channelNumber: channel.number,
+    channelName: channel.name,
+    logoUrl: resolveLogoUrl?.call(channel.iconPath),
+    leadingMs: leadingMs,
+    entries: entries,
+  );
 }

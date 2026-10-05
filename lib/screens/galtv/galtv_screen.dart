@@ -195,12 +195,15 @@ class _GalTvScreenState extends State<GalTvScreen> with FocusableTab {
     final now = DateTime.now().toUtc();
     // A long runway: the guide renders only what fits the panel, so it needs
     // material to fill an ultrawide, not just a laptop window.
-    final lineups = await client.fetchLineups(
-      from: now.subtract(const Duration(minutes: 30)),
-      to: now.add(const Duration(hours: 12)),
-    );
+    final windowStart = now.subtract(const Duration(minutes: 30));
+    final windowEnd = now.add(const Duration(hours: 12));
+    final lineups = await client.fetchLineups(from: windowStart, to: windowEnd);
     return galTvGuideRows(
       channels: lineups,
+      // The same bounds the fetch used: rows are clamped to them so every
+      // channel shares one time origin (the guide's ruler depends on it).
+      windowStart: windowStart,
+      windowEnd: windowEnd,
       currentChannelId: _activeChannelId,
       currentProgramId: _activeProgramId,
       resolveLogoUrl: _resolveLogoUrl,
@@ -260,7 +263,9 @@ class _GalTvScreenState extends State<GalTvScreen> with FocusableTab {
     final channel = _lastChannel;
 
     if (_resolving) {
-      return const Scaffold(body: SafeArea(child: Center(child: CircularProgressIndicator())));
+      return const Scaffold(
+        body: SafeArea(child: Center(child: CircularProgressIndicator())),
+      );
     }
 
     if (_error != null) {

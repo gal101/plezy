@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
@@ -11,12 +12,12 @@ import '../../utils/media_image_helper.dart';
 import '../optimized_media_image.dart';
 import '../video_controls/widgets/channel_logo.dart';
 
-/// Programme cell metrics. Cells are sized by *duration*, not evenly: a
-/// 10-minute break must not look like a two-hour feature, and the width is the
-/// only clock the grid has. There is deliberately **no maximum width** — a cap
-/// would break the grid's proportionality and leave a dead band at the right of
-/// the row.
-const double _minEntryWidth = 96;
+/// Programme cell metrics. A cell's *pitch* — the box it occupies in the strip —
+/// is exactly its duration at the shared time scale: no minimum, no maximum, and
+/// no gap between boxes. That is what keeps the ruler above the grid honest: a
+/// cell's left edge then lands exactly on its start time, so a tick and the cell
+/// that begins at that time share an `x`. The visual gutter between cards lives
+/// *inside* the box ([_cellGap]), so separating them cannot shift the time axis.
 
 /// The time scale. The overlay solves for the scale that makes the fetched
 /// window fill the panel exactly, so a wide screen shows more hours rather than
@@ -37,25 +38,38 @@ const double _logoSize = 44.0;
 const double _rowsListPadding = 8;
 const double _rowBorderWidth = 2;
 const double _stripPadding = 6;
+
+/// The gutter between two cards, carried as a right inset *inside* each cell's
+/// box so the box pitch stays exactly the cell's duration.
 const double _cellGap = 6;
 
 /// Everything between the panel edge and the cells: the rows list's padding, the
 /// row's border, and the strip's own padding — on both sides.
 const double _horizontalInset = 2 * (_rowsListPadding + _rowBorderWidth + _stripPadding);
 
-/// Laid-out width of [entry]'s cell at [pixelsPerMinute]. Shared with the row,
-/// which sums it to decide whether its strip actually overflows.
-double _entryWidthFor(GalTvGuideEntry entry, double pixelsPerMinute) =>
-    (entry.duration.inSeconds / 60 * pixelsPerMinute).clamp(_minEntryWidth, double.infinity);
+/// Where the ruler sits so it spans exactly the horizontal strips below it: past
+/// the channel column, the rows list's padding and the row's border — the same
+/// edges a strip spans. The painter then adds [_stripPadding], so ruler `x = 0` is
+/// the window start, matching a row's cell coordinates.
+const double _stripViewportLeftInset = _channelColumnWidth + _rowsListPadding + _rowBorderWidth;
+const double _stripViewportRightInset = _rowsListPadding + _rowBorderWidth;
 
-/// The width a row's *cells and gaps* occupy at [pixelsPerMinute]. The strip's
-/// own padding is left out on purpose: [_horizontalInset] already accounts for
-/// it, and counting it twice left the last cell 12 px short of the panel edge.
+/// How far a row's leading gap (a schedule hole at the window start) pushes its
+/// first cell. Part of the row's width, so the time scale accounts for it.
+double _leadingWidthFor(GalTvGuideRow row, double pixelsPerMinute) => row.leadingMs / 60000 * pixelsPerMinute;
+
+/// The pitch [entry] occupies at [pixelsPerMinute]: its duration at the shared
+/// time scale. Shared with the row, which sums it to decide whether its strip
+/// actually overflows.
+double _entryPitchFor(GalTvGuideEntry entry, double pixelsPerMinute) => entry.duration.inSeconds / 60 * pixelsPerMinute;
+
+/// The width a row's *cells* occupy at [pixelsPerMinute], including its leading
+/// gap. This is the row's true time span in pixels, so the fitted scale and the
+/// ruler's ticks agree with it.
 double _rowWidthAt(GalTvGuideRow row, double pixelsPerMinute) {
-  var width = 0.0;
-  for (var i = 0; i < row.entries.length; i++) {
-    width += _entryWidthFor(row.entries[i], pixelsPerMinute);
-    if (i != row.entries.length - 1) width += _cellGap;
+  var width = _leadingWidthFor(row, pixelsPerMinute);
+  for (final entry in row.entries) {
+    width += _entryPitchFor(entry, pixelsPerMinute);
   }
   return width;
 }
@@ -183,6 +197,12 @@ class _GalTvGuideOverlayState extends State<GalTvGuideOverlay> {
   /// never steals focus back — the viewer may be walking the grid.
   bool _rowFocusApplied = false;
 
+  /// One horizontal offset for the whole grid. Each row owns its own controller
+  /// (the vertical list recycles rows, and a re-attached position would restart
+  /// at 0) and reports its scrolls here; every other row follows. Without this the
+  /// rows scrolled independently and the ruler above them could not stay true.
+  final ValueNotifier<double> _horizontalOffset = ValueNotifier<double>(0);
+
   /// Focus the tuned channel's row on open — never the close button, which is
   /// only the fallback.
   ///
@@ -248,6 +268,7 @@ class _GalTvGuideOverlayState extends State<GalTvGuideOverlay> {
     }
     _rowFocusNodes.clear();
     _scopeFocusNode.dispose();
+    _horizontalOffset.dispose();
     super.dispose();
   }
 
@@ -373,25 +394,76 @@ class _GalTvGuideOverlayState extends State<GalTvGuideOverlay> {
     // to show all 12 h shows all 12 h, a narrow one scrolls.
     final budget = panelWidth - _channelColumnWidth - _horizontalInset;
     final pixelsPerMinute = _fitPixelsPerMinute(rows, budget);
+    final now = DateTime.now();
+    // The window the rows were clamped to. Derived rather than passed in: every
+    // row records how far its first cell sits from the window start
+    // (`leadingMs`), so `first.start − leadingMs` is that start back — and the
+    // layer therefore needs no extra contract with the tab, which computes the
+    // window when it fetches.
+    final windowStart = _windowStart(rows);
+    final windowEnd = _windowEnd(rows);
 
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: _rowsListPadding),
-      itemCount: rows.length,
-      itemBuilder: (context, index) {
-        final row = rows[index];
-        final isCurrent = widget.currentChannelId != null && row.channelId == widget.currentChannelId;
-        return _GalTvGuideRowTile(
-          row: row,
-          tokens: tk,
-          isCurrent: isCurrent,
-          focusNode: _rowFocusNode(row.channelId),
-          pixelsPerMinute: pixelsPerMinute,
-          logoHeaders: widget.logoHeaders,
-          client: widget.client,
-          onSelect: widget.onSelectChannel,
-        );
-      },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (windowStart != null && windowEnd != null)
+          _GalTvTimeRuler(
+            windowStart: windowStart,
+            windowEnd: windowEnd,
+            pixelsPerMinute: pixelsPerMinute,
+            scrollOffset: _horizontalOffset,
+            tokens: tk,
+          ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: _rowsListPadding),
+            itemCount: rows.length,
+            itemBuilder: (context, index) {
+              final row = rows[index];
+              final isCurrent = widget.currentChannelId != null && row.channelId == widget.currentChannelId;
+              return _GalTvGuideRowTile(
+                row: row,
+                tokens: tk,
+                isCurrent: isCurrent,
+                focusNode: _rowFocusNode(row.channelId),
+                pixelsPerMinute: pixelsPerMinute,
+                logoHeaders: widget.logoHeaders,
+                client: widget.client,
+                now: now,
+                windowStart: windowStart,
+                scrollOffset: _horizontalOffset,
+                onSelect: widget.onSelectChannel,
+              );
+            },
+          ),
+        ),
+      ],
     );
+  }
+
+  /// The instant every row's `x = 0` maps to. Empty rows are skipped: they have
+  /// no cells to place.
+  static DateTime? _windowStart(List<GalTvGuideRow> rows) {
+    DateTime? earliest;
+    for (final row in rows) {
+      if (row.entries.isEmpty) continue;
+      final start = row.entries.first.start.subtract(Duration(milliseconds: row.leadingMs));
+      if (earliest == null || start.isBefore(earliest)) earliest = start;
+    }
+    return earliest;
+  }
+
+  /// The far end of the fetched window: the latest cut-off any row reaches. Every
+  /// row was clamped to the same window, so at least one row that ran long sits
+  /// exactly on it.
+  static DateTime? _windowEnd(List<GalTvGuideRow> rows) {
+    DateTime? latest;
+    for (final row in rows) {
+      if (row.entries.isEmpty) continue;
+      final stop = row.entries.last.stop;
+      if (latest == null || stop.isAfter(latest)) latest = stop;
+    }
+    return latest;
   }
 
   Widget _buildMessage(
@@ -446,6 +518,9 @@ class _GalTvGuideRowTile extends StatefulWidget {
     required this.pixelsPerMinute,
     required this.logoHeaders,
     required this.client,
+    required this.now,
+    required this.windowStart,
+    required this.scrollOffset,
     required this.onSelect,
   });
 
@@ -459,6 +534,18 @@ class _GalTvGuideRowTile extends StatefulWidget {
 
   /// The Plex client used to paint each cell's programme backdrop.
   final MediaServerClient? client;
+
+  /// The wall clock this frame paints against — drives the "airing now" progress
+  /// and the vertical now marker.
+  final DateTime now;
+
+  /// The window start every row's `x = 0` maps to, or null when the grid has no
+  /// cells at all.
+  final DateTime? windowStart;
+
+  /// The grid-wide horizontal offset; this row follows it and reports its own
+  /// scrolls back into it.
+  final ValueNotifier<double> scrollOffset;
 
   /// The grid-wide time scale, fitted to the panel by the overlay.
   final double pixelsPerMinute;
@@ -474,6 +561,56 @@ class _GalTvGuideRowTileState extends State<_GalTvGuideRowTile> {
 
   bool _focused = false;
 
+  /// This row's own horizontal controller. The vertical list recycles rows, so a
+  /// single [ScrollController] shared by every strip cannot be used: a position
+  /// that re-attaches would start at 0 while its siblings sit mid-window. Each row
+  /// therefore follows [widget.scrollOffset] and reports its own scrolls back.
+  final ScrollController _stripController = ScrollController();
+
+  /// Set on the first post-frame. Before that the strip's only notification is the
+  /// list's initial anchor, which must not be mistaken for a user scroll.
+  bool _ready = false;
+
+  /// Cleared when this row's strip is shorter than the shared offset: it then
+  /// pins at its own end instead of dragging the whole grid back to fit.
+  bool _followsSharedOffset = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _stripController.addListener(_onStripScrolled);
+    widget.scrollOffset.addListener(_applySharedOffset);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _ready = true;
+      _applySharedOffset();
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.scrollOffset.removeListener(_applySharedOffset);
+    _stripController.removeListener(_onStripScrolled);
+    _stripController.dispose();
+    super.dispose();
+  }
+
+  void _onStripScrolled() {
+    if (!mounted || !_ready || !_followsSharedOffset || !_stripController.hasClients) return;
+    final value = _stripController.offset;
+    if ((widget.scrollOffset.value - value).abs() > 0.5) widget.scrollOffset.value = value;
+  }
+
+  void _applySharedOffset() {
+    if (!mounted || !_followsSharedOffset || !_stripController.hasClients) return;
+    final target = widget.scrollOffset.value;
+    if ((_stripController.offset - target).abs() <= 0.5) return;
+    _stripController.jumpTo(target);
+    // A strip too short for the shared offset can never follow it; stop trying so
+    // its clamp does not pull the other rows back.
+    if ((_stripController.offset - target).abs() > 0.5) _followsSharedOffset = false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final tk = widget.tokens;
@@ -485,7 +622,9 @@ class _GalTvGuideRowTileState extends State<_GalTvGuideRowTile> {
     // and nothing else, so a ring that lingers on some other row can never be
     // read as "this is the channel on screen" — which is exactly how a shared
     // focus node made channel 2 look selected after tuning back to channel 1.
-    final rowFill = selected ? Color.alphaBlend(theme.colorScheme.primary.withValues(alpha: 0.18), tk.bg) : Colors.transparent;
+    final rowFill = selected
+        ? Color.alphaBlend(theme.colorScheme.primary.withValues(alpha: 0.18), tk.bg)
+        : Colors.transparent;
     final borderColor = selected
         ? theme.colorScheme.primary.withValues(alpha: _focused ? 1 : 0.75)
         : (_focused ? tk.text.withValues(alpha: 0.7) : Colors.transparent);
@@ -525,9 +664,7 @@ class _GalTvGuideRowTileState extends State<_GalTvGuideRowTile> {
                           constraints: const BoxConstraints(minWidth: 30),
                           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                           decoration: BoxDecoration(
-                            color: selected
-                                ? theme.colorScheme.primary
-                                : tk.text.withValues(alpha: 0.14),
+                            color: selected ? theme.colorScheme.primary : tk.text.withValues(alpha: 0.14),
                             borderRadius: BorderRadius.circular(tk.radiusSm),
                           ),
                           child: Text(
@@ -552,11 +689,7 @@ class _GalTvGuideRowTileState extends State<_GalTvGuideRowTile> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               if (widget.row.logoUrl != null) ...[
-                                ChannelLogo(
-                                  url: widget.row.logoUrl!,
-                                  size: _logoSize,
-                                  headers: widget.logoHeaders,
-                                ),
+                                ChannelLogo(url: widget.row.logoUrl!, size: _logoSize, headers: widget.logoHeaders),
                                 const SizedBox(height: 6),
                               ],
                               Text(
@@ -612,20 +745,51 @@ class _GalTvGuideRowTileState extends State<_GalTvGuideRowTile> {
                       final contentWidth = _rowWidthAt(widget.row, widget.pixelsPerMinute);
                       final scrollable = contentWidth > constraints.maxWidth - 2 * _stripPadding + 1;
                       final rowBase = Color.alphaBlend(rowFill, tk.bg);
+                      // The gap this channel's schedule has at the window start.
+                      // Left padding is part of the row's coordinates: a cell at
+                      // time T always sits at `leading + (T − windowStart)`, which
+                      // is what makes one ruler correct for every channel.
+                      final leadingWidth = _leadingWidthFor(widget.row, widget.pixelsPerMinute);
+                      final windowStart = widget.windowStart;
+                      final nowPx = windowStart == null
+                          ? null
+                          : widget.now.difference(windowStart).inMilliseconds / 60000 * widget.pixelsPerMinute;
                       return Stack(
                         children: [
-                          ListView.separated(
+                          // No separator: a cell's box pitch is its duration, and
+                          // the visible gutter lives inside the box, so boxes stay
+                          // on the time axis.
+                          ListView.builder(
+                            controller: _stripController,
                             scrollDirection: Axis.horizontal,
-                            padding: const EdgeInsets.symmetric(horizontal: _stripPadding, vertical: 8),
+                            padding: EdgeInsets.fromLTRB(_stripPadding + leadingWidth, 8, _stripPadding, 8),
                             itemCount: widget.row.entries.length,
-                            separatorBuilder: (_, _) => const SizedBox(width: _cellGap),
                             itemBuilder: (context, index) => _GalTvGuideEntryTile(
                               entry: widget.row.entries[index],
                               tokens: tk,
                               pixelsPerMinute: widget.pixelsPerMinute,
+                              now: widget.now,
                               client: widget.client,
                             ),
                           ),
+                          // The now line runs down the whole grid at `now`'s `x`,
+                          // so a channel's position in its own schedule reads at a
+                          // glance. It is a sibling of the strip (not inside the
+                          // scroll view), so it subtracts the shared offset itself
+                          // and repaints as the grid scrolls.
+                          if (nowPx != null)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: CustomPaint(
+                                  painter: _NowLinePainter(
+                                    nowPx: nowPx,
+                                    stripPadding: _stripPadding,
+                                    color: Theme.of(context).colorScheme.primary,
+                                    offset: widget.scrollOffset,
+                                  ),
+                                ),
+                              ),
+                            ),
                           // A thin fade marks the strip as scrollable, so a title
                           // cut off at the panel edge reads as "more to the right"
                           // rather than as broken text.
@@ -641,10 +805,7 @@ class _GalTvGuideRowTileState extends State<_GalTvGuideRowTile> {
                                     gradient: LinearGradient(
                                       begin: Alignment.centerLeft,
                                       end: Alignment.centerRight,
-                                      colors: [
-                                        rowBase.withValues(alpha: 0),
-                                        rowBase,
-                                      ],
+                                      colors: [rowBase.withValues(alpha: 0), rowBase],
                                     ),
                                   ),
                                 ),
@@ -667,17 +828,28 @@ class _GalTvGuideRowTileState extends State<_GalTvGuideRowTile> {
 /// One programme cell. [GalTvGuideEntry.isCurrent] is filled with the accent and
 /// carries a NOW badge and a progress bar; a non-playable entry (a Tunarr `flex`
 /// break) is dimmed but still shown, so the grid keeps the schedule's shape.
+///
+/// "Tuned" and "airing now" are deliberately different signals: **every**
+/// channel's airing cell shows how far in it is (badge, progress bar, dimmed
+/// elapsed portion), but only the tuned channel's row wears the accent fill and
+/// border. Tinting every airing row would read as if every channel were the one
+/// on screen.
 class _GalTvGuideEntryTile extends StatelessWidget {
   const _GalTvGuideEntryTile({
     required this.entry,
     required this.tokens,
     required this.pixelsPerMinute,
+    required this.now,
     required this.client,
   });
 
   final GalTvGuideEntry entry;
   final MonoTokens tokens;
   final double pixelsPerMinute;
+
+  /// The wall clock this frame paints against. The layer rebuilds on a timer, so
+  /// the progress and the dimmed portion stay live while the guide is up.
+  final DateTime now;
 
   /// The Plex client the cell's backdrop is fetched through; null leaves the
   /// plain cell.
@@ -686,159 +858,312 @@ class _GalTvGuideEntryTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isCurrent = entry.isCurrent;
+    // The tuned channel's programme comes from the player's live identity; every
+    // other channel's "now" is derived from the wall clock against the slot's own
+    // bounds.
+    final isAiring = isCurrent || (!now.isBefore(entry.start) && now.isBefore(entry.stop));
     final playable = entry.isPlayable;
     final theme = Theme.of(context);
 
     final idleFill = Color.alphaBlend(tokens.text.withValues(alpha: 0.07), tokens.bg);
     final currentFill = Color.alphaBlend(theme.colorScheme.primary.withValues(alpha: 0.28), tokens.bg);
-    final borderColor = isCurrent
-        ? theme.colorScheme.primary
-        : tokens.text.withValues(alpha: playable ? 0.16 : 0.08);
-    final titleColor = playable
-        ? (isCurrent ? tokens.text : tokens.text)
-        : tokens.textMuted.withValues(alpha: 0.7);
-    final width = _entryWidthFor(entry, pixelsPerMinute);
+    final borderColor = isCurrent ? theme.colorScheme.primary : tokens.text.withValues(alpha: playable ? 0.16 : 0.08);
+    final titleColor = playable ? (isCurrent ? tokens.text : tokens.text) : tokens.textMuted.withValues(alpha: 0.7);
+    final pitch = _entryPitchFor(entry, pixelsPerMinute);
+    // The card keeps the box's left edge — its start time — and gives up only the
+    // gutter, so the tick above it stays true.
+    final width = (pitch - _cellGap).clamp(1.0, double.infinity);
     final ratingKey = entry.ratingKey;
     final radius = BorderRadius.circular(tokens.radiusSm);
+    final progress = _progress();
 
-    return Container(
-      width: width,
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        color: isCurrent ? currentFill : idleFill,
-        borderRadius: radius,
-      ),
-      // Painted above the artwork so the focus/current ring is never buried.
-      foregroundDecoration: BoxDecoration(
-        borderRadius: radius,
-        border: Border.all(color: borderColor, width: isCurrent ? 2 : 1),
-      ),
-      child: Stack(
-        children: [
-          // The item's own Plex backdrop, fetched the way the rest of the app
-          // fetches artwork (sized `/photo/:/transcode`, disk-cached, token
-          // included). A missing backdrop, or no client, simply shows the cell
-          // fill underneath — never a broken tile.
-          if (ratingKey != null)
-            Positioned.fill(
-              child: OptimizedMediaImage(
-                client: client,
-                imagePath: '/library/metadata/$ratingKey/art',
-                width: width,
-                fit: BoxFit.cover,
-                imageType: ImageType.art,
-                errorWidget: (_, _, _) => const SizedBox.shrink(),
-              ),
-            ),
-          // A scrim, because artwork can be bright exactly where the white title
-          // sits. Denser at the bottom, where the times are.
-          if (ratingKey != null)
-            const Positioned.fill(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0x59000000), Color(0xB8000000)],
+    return SizedBox(
+      width: pitch,
+      child: Padding(
+        padding: const EdgeInsets.only(right: _cellGap),
+        child: Container(
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(color: isCurrent ? currentFill : idleFill, borderRadius: radius),
+          // Painted above the artwork so the focus/current ring is never buried.
+          foregroundDecoration: BoxDecoration(
+            borderRadius: radius,
+            border: Border.all(color: borderColor, width: isCurrent ? 2 : 1),
+          ),
+          child: Stack(
+            children: [
+              // The item's own Plex backdrop, fetched the way the rest of the app
+              // fetches artwork (sized `/photo/:/transcode`, disk-cached, token
+              // included). A missing backdrop, or no client, simply shows the cell
+              // fill underneath — never a broken tile.
+              if (ratingKey != null)
+                Positioned.fill(
+                  child: OptimizedMediaImage(
+                    client: client,
+                    imagePath: '/library/metadata/$ratingKey/art',
+                    width: width,
+                    fit: BoxFit.cover,
+                    imageType: ImageType.art,
+                    errorWidget: (_, _, _) => const SizedBox.shrink(),
                   ),
                 ),
-              ),
-            ),
-          // The progress bar rides the cell's bottom edge instead of taking a row
-          // from the text: a badge plus a two-line title already fills a narrow
-          // cell, and squeezing that text is what used to mangle the title.
-          Padding(
-            padding: EdgeInsets.fromLTRB(10, 8, 10, isCurrent ? 12 : 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (isCurrent)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 3),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.primary,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            t.galtv.nowBadge,
-                            style: TextStyle(
-                              color: theme.colorScheme.onPrimary,
-                              fontSize: 9,
-                              // Every line height is pinned so the cell's budget
-                              // does not depend on the active font's metrics.
-                              height: 1.2,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.6,
-                            ),
-                          ),
-                        ),
-                      ],
+              // A scrim, because artwork can be bright exactly where the white title
+              // sits. Denser at the bottom, where the times are.
+              if (ratingKey != null)
+                const Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0x59000000), Color(0xB8000000)],
+                      ),
                     ),
                   ),
-                // Natural height, capped at two lines. A squeezed [Expanded] used
-                // to hand the title less than two lines of room, and [Text] does
-                // not clip its overflow: the second line painted down over the
-                // time row. That was the "weird text". Any shortfall must now be a
-                // loud layout overflow (the widget test pins that), never silent
-                // overlap.
-                Text(
-                  entry.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: titleColor,
-                    fontSize: 14,
-                    fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
-                    height: 1.1,
+                ),
+              // The part of an airing programme that has already played, dimmed — so
+              // "where is this channel in its film" reads without a badge. Painted
+              // under the text, over the artwork.
+              if (isAiring && progress > 0)
+                Positioned.fill(
+                  child: FractionallySizedBox(
+                    alignment: Alignment.centerLeft,
+                    widthFactor: progress,
+                    child: const ColoredBox(color: Color(0x38000000)),
                   ),
                 ),
-                const Spacer(),
-                Text(
-                  '${_formatClock(entry.start)} – ${_formatClock(entry.stop)}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: tokens.textMuted, fontSize: 12, height: 1.2),
-                ),
-              ],
-            ),
-          ),
-          if (isCurrent)
-            Positioned(
-              left: 9,
-              right: 9,
-              bottom: 6,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(2),
-                child: LinearProgressIndicator(
-                  value: _currentProgress(),
-                  minHeight: 3,
-                  backgroundColor: tokens.text.withValues(alpha: 0.15),
-                  color: theme.colorScheme.primary,
+              // The progress bar rides the cell's bottom edge instead of taking a row
+              // from the text: a badge plus a two-line title already fills a narrow
+              // cell, and squeezing that text is what used to mangle the title.
+              Padding(
+                padding: EdgeInsets.fromLTRB(10, 8, 10, isAiring ? 12 : 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (isAiring)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 3),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                // Filled accent for the tuned channel; an accent-tinted
+                                // outline for "airing elsewhere", which must not read
+                                // as the channel on screen.
+                                color: isCurrent
+                                    ? theme.colorScheme.primary
+                                    : theme.colorScheme.primary.withValues(alpha: 0.16),
+                                border: isCurrent
+                                    ? null
+                                    : Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.7)),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                t.galtv.nowBadge,
+                                style: TextStyle(
+                                  color: isCurrent ? theme.colorScheme.onPrimary : theme.colorScheme.primary,
+                                  fontSize: 9,
+                                  // Every line height is pinned so the cell's budget
+                                  // does not depend on the active font's metrics.
+                                  height: 1.2,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.6,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    // Natural height, capped at two lines. A squeezed [Expanded] used
+                    // to hand the title less than two lines of room, and [Text] does
+                    // not clip its overflow: the second line painted down over the
+                    // time row. That was the "weird text". Any shortfall must now be a
+                    // loud layout overflow (the widget test pins that), never silent
+                    // overlap.
+                    Text(
+                      entry.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: titleColor,
+                        fontSize: 14,
+                        fontWeight: isCurrent ? FontWeight.w700 : FontWeight.w500,
+                        height: 1.1,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${_formatClock(entry.start)} – ${_formatClock(entry.stop)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: tokens.textMuted, fontSize: 12, height: 1.2),
+                    ),
+                  ],
                 ),
               ),
-            ),
-        ],
+              if (isAiring)
+                Positioned(
+                  left: 9,
+                  right: 9,
+                  bottom: 6,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      minHeight: 3,
+                      backgroundColor: tokens.text.withValues(alpha: 0.15),
+                      color: isCurrent ? theme.colorScheme.primary : theme.colorScheme.primary.withValues(alpha: 0.75),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
 
-  /// How far into the current programme we are, from the wall clock. The layer
-  /// repaints on [_GalTvGuideOverlayState._clockTimer], so this stays live while
-  /// the guide is up.
-  double _currentProgress() {
+  /// How far into the programme we are, from the wall clock. The layer repaints
+  /// on [_GalTvGuideOverlayState._clockTimer], so this stays live while the guide
+  /// is up.
+  double _progress() {
     final total = entry.duration.inMilliseconds;
     if (total <= 0) return 0;
-    final elapsed = DateTime.now().difference(entry.start).inMilliseconds;
+    final elapsed = now.difference(entry.start).inMilliseconds;
     return (elapsed / total).clamp(0.0, 1.0);
   }
+}
 
-  String _formatClock(DateTime time) {
-    final local = time.toLocal();
-    String two(int value) => value.toString().padLeft(2, '0');
-    return '${two(local.hour)}:${two(local.minute)}';
+/// The clock above the grid: a tick and its label every 30 minutes, plus the now
+/// marker. It shares the rows' time scale and scroll offset, so a tick sits
+/// exactly over the programme boundary it names.
+///
+/// It sits outside the rows' vertical list, so it stays put while they scroll.
+class _GalTvTimeRuler extends StatelessWidget {
+  const _GalTvTimeRuler({
+    required this.windowStart,
+    required this.windowEnd,
+    required this.pixelsPerMinute,
+    required this.scrollOffset,
+    required this.tokens,
+  });
+
+  final DateTime windowStart;
+  final DateTime windowEnd;
+  final double pixelsPerMinute;
+  final ValueListenable<double> scrollOffset;
+  final MonoTokens tokens;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final now = DateTime.now();
+    final ticks = _halfHourTicks(windowStart, windowEnd);
+    return SizedBox(
+      height: 26,
+      child: Padding(
+        // The ruler spans exactly the strips below it; a tick then lands on the
+        // same `x` as the cell for the programme that starts at it.
+        padding: const EdgeInsets.only(left: _stripViewportLeftInset, right: _stripViewportRightInset),
+        child: ValueListenableBuilder<double>(
+          valueListenable: scrollOffset,
+          builder: (context, scroll, _) {
+            final nowX = _stripPadding + _xAt(now) - scroll;
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                for (final tick in ticks)
+                  Positioned(
+                    left: _stripPadding + _xAt(tick) - scroll,
+                    top: 0,
+                    bottom: 0,
+                    width: 46,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _formatClock(tick),
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.clip,
+                          style: TextStyle(color: tokens.textMuted, fontSize: 11, height: 1.1),
+                        ),
+                        const Spacer(),
+                        Container(width: 1, height: 6, color: tokens.text.withValues(alpha: 0.25)),
+                      ],
+                    ),
+                  ),
+                Positioned(
+                  left: nowX - 0.75,
+                  top: 0,
+                  bottom: 0,
+                  width: 1.5,
+                  child: ColoredBox(color: theme.colorScheme.primary),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
   }
+
+  /// Where [time] sits on the grid, in strip-content pixels: the same mapping a
+  /// row uses for its cells, so the ruler's tick and the cell that begins at that
+  /// time share an `x`.
+  double _xAt(DateTime time) => time.difference(windowStart).inMilliseconds / 60000 * pixelsPerMinute;
+}
+
+/// The vertical now marker drawn down a single row's strip.
+///
+/// It is a sibling of the scrolling strip, so it subtracts the shared offset
+/// itself and repaints as the grid scrolls — and it stays out of the content, so
+/// it never triggers an artwork request.
+class _NowLinePainter extends CustomPainter {
+  _NowLinePainter({required this.nowPx, required this.stripPadding, required this.color, required this.offset})
+    : super(repaint: offset);
+
+  final double nowPx;
+  final double stripPadding;
+  final Color color;
+  final ValueListenable<double> offset;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final x = stripPadding + nowPx - offset.value;
+    if (x < 0 || x > size.width) return;
+    canvas.drawRect(Rect.fromLTWH(x - 0.75, 0, 1.5, size.height), Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(covariant _NowLinePainter oldDelegate) =>
+      oldDelegate.nowPx != nowPx || oldDelegate.stripPadding != stripPadding || oldDelegate.color != color;
+}
+
+/// The wall-clock half hour at or before [local], as a local [DateTime].
+DateTime _floorToHalfHour(DateTime local) =>
+    DateTime(local.year, local.month, local.day, local.hour, local.minute - (local.minute % 30));
+
+/// The next wall-clock half hour. Built from the wall clock rather than by adding
+/// a duration, so a DST change cannot push the labels off the half hour.
+DateTime _addHalfHour(DateTime local) => DateTime(local.year, local.month, local.day, local.hour, local.minute + 30);
+
+/// The 30-minute boundaries the ruler labels: wall-clock halves, not
+/// "windowStart + 30 min", so the labels read as times a viewer recognizes.
+List<DateTime> _halfHourTicks(DateTime windowStart, DateTime windowEnd) {
+  final ticks = <DateTime>[];
+  var boundary = _floorToHalfHour(windowStart.toLocal());
+  if (boundary.isBefore(windowStart)) boundary = _addHalfHour(boundary);
+  // Bounded so a nonsensical window can never spin: 12 h is 25 ticks.
+  while (!boundary.isAfter(windowEnd) && ticks.length < 200) {
+    ticks.add(boundary);
+    boundary = _addHalfHour(boundary);
+  }
+  return ticks;
+}
+
+String _formatClock(DateTime time) {
+  final local = time.toLocal();
+  String two(int value) => value.toString().padLeft(2, '0');
+  return '${two(local.hour)}:${two(local.minute)}';
 }

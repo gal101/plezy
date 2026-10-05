@@ -20,36 +20,36 @@ GalTvGuideRow _row(
   channelName: name,
   logoUrl: logoUrl,
   entries: [
-        GalTvGuideEntry(
-          title: 'Operation Mincemeat',
-          start: now.subtract(const Duration(hours: 2)),
-          stop: now.add(const Duration(minutes: 1)),
-          isPlayable: true,
-          isCurrent: current,
-        ),
-        GalTvGuideEntry(
-          title: 'Commercial Break',
-          start: now.add(const Duration(minutes: 1)),
-          stop: now.add(const Duration(minutes: 11)),
-          isPlayable: false,
-          isCurrent: false,
-        ),
-        GalTvGuideEntry(
-          title: 'People We Meet on Vacation',
-          start: now.add(const Duration(minutes: 11)),
-          stop: now.add(const Duration(minutes: 131)),
-          isPlayable: true,
-          isCurrent: false,
-        ),
-        GalTvGuideEntry(
-          title: 'Truth & Treason',
-          start: now.add(const Duration(minutes: 131)),
-          stop: now.add(const Duration(minutes: 191)),
-          isPlayable: true,
-          isCurrent: false,
-        ),
-      ],
-    );
+    GalTvGuideEntry(
+      title: 'Operation Mincemeat',
+      start: now.subtract(const Duration(hours: 2)),
+      stop: now.add(const Duration(minutes: 1)),
+      isPlayable: true,
+      isCurrent: current,
+    ),
+    GalTvGuideEntry(
+      title: 'Commercial Break',
+      start: now.add(const Duration(minutes: 1)),
+      stop: now.add(const Duration(minutes: 11)),
+      isPlayable: false,
+      isCurrent: false,
+    ),
+    GalTvGuideEntry(
+      title: 'People We Meet on Vacation',
+      start: now.add(const Duration(minutes: 11)),
+      stop: now.add(const Duration(minutes: 131)),
+      isPlayable: true,
+      isCurrent: false,
+    ),
+    GalTvGuideEntry(
+      title: 'Truth & Treason',
+      start: now.add(const Duration(minutes: 131)),
+      stop: now.add(const Duration(minutes: 191)),
+      isPlayable: true,
+      isCurrent: false,
+    ),
+  ],
+);
 
 Widget _app({
   required List<GalTvGuideRow> rows,
@@ -77,7 +77,7 @@ Widget _app({
 void main() {
   setUpAll(() => LocaleSettings.setLocaleSync(AppLocale.en));
 
-  testWidgets('marks the tuned channel and its programme, once each', (tester) async {
+  testWidgets('marks the tuned channel, and every channel that is airing now', (tester) async {
     final now = DateTime.now();
     await tester.pumpWidget(
       _app(
@@ -91,7 +91,12 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Watching'), findsOneWidget, reason: 'only the tuned channel is marked');
-    expect(find.text('NOW'), findsOneWidget, reason: 'only the airing programme is marked');
+    // Both channels are mid-programme, so both airing cells carry the badge and a
+    // progress bar. That is what answers "where is this channel in its schedule"
+    // at a glance, for every channel — the tuned row is told apart by the accent
+    // fill and its "Watching" label, not by owning the only badge.
+    expect(find.text('NOW'), findsNWidgets(2));
+    expect(find.byType(LinearProgressIndicator), findsNWidgets(2));
 
     await tester.pumpWidget(const SizedBox());
   });
@@ -236,9 +241,7 @@ void main() {
 
     await tester.pumpWidget(
       _app(
-        rows: [
-          GalTvGuideRow(channelId: 'war', channelNumber: '1', channelName: 'War Movies', entries: entries),
-        ],
+        rows: [GalTvGuideRow(channelId: 'war', channelNumber: '1', channelName: 'War Movies', entries: entries)],
         currentChannelId: 'war',
       ),
     );
@@ -276,9 +279,7 @@ void main() {
 
     await tester.pumpWidget(
       _app(
-        rows: [
-          GalTvGuideRow(channelId: 'war', channelNumber: '1', channelName: 'War Movies', entries: entries),
-        ],
+        rows: [GalTvGuideRow(channelId: 'war', channelNumber: '1', channelName: 'War Movies', entries: entries)],
         currentChannelId: 'war',
       ),
     );
@@ -398,4 +399,130 @@ void main() {
 
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('the same x is the same time on every row', (tester) async {
+    // Channel 1 starts at the window origin; channel 2 has a half-hour hole first,
+    // which the model records as a 30-minute leading gap. Channel 2's first cell
+    // must therefore line up with channel 1's *second* cell, not with its first.
+    final base = DateTime(2026, 1, 1, 20, 0);
+    const half = Duration(minutes: 30);
+    final rows = [
+      GalTvGuideRow(
+        channelId: 'war',
+        channelNumber: '1',
+        channelName: 'War Movies',
+        entries: [
+          GalTvGuideEntry(title: 'A1', start: base, stop: base.add(half), isPlayable: true, isCurrent: false),
+          GalTvGuideEntry(
+            title: 'A2',
+            start: base.add(half),
+            stop: base.add(half * 2),
+            isPlayable: true,
+            isCurrent: false,
+          ),
+        ],
+      ),
+      GalTvGuideRow(
+        channelId: 'comedy',
+        channelNumber: '2',
+        channelName: 'Comedy',
+        leadingMs: half.inMilliseconds,
+        entries: [
+          GalTvGuideEntry(
+            title: 'B1',
+            start: base.add(half),
+            stop: base.add(half * 2),
+            isPlayable: true,
+            isCurrent: false,
+          ),
+        ],
+      ),
+    ];
+
+    tester.view.physicalSize = const Size(1920, 1080);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(_app(rows: rows, currentChannelId: 'war'));
+    await tester.pumpAndSettle();
+
+    final a2 = _cellRect(tester, 'A2');
+    final b1 = _cellRect(tester, 'B1');
+    expect(
+      (a2.left - b1.left).abs(),
+      lessThanOrEqualTo(0.5),
+      reason: 'the same start time must be at the same x on every row',
+    );
+    expect(a2.width, closeTo(b1.width, 0.5), reason: 'the same duration must be the same width');
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a ruler tick sits on the cell that starts at that time, and follows a scroll', (tester) async {
+    // Twelve hours at the readable floor → the strip overflows and scrolls.
+    final base = DateTime(2026, 1, 1, 20, 0);
+    final entries = [
+      for (var i = 0; i < 24; i++)
+        GalTvGuideEntry(
+          title: 'P${i + 1}',
+          start: base.add(Duration(minutes: 30 * i)),
+          stop: base.add(Duration(minutes: 30 * (i + 1))),
+          isPlayable: true,
+          isCurrent: i == 0,
+        ),
+    ];
+
+    tester.view.physicalSize = const Size(1568, 906);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      _app(
+        rows: [GalTvGuideRow(channelId: 'war', channelNumber: '1', channelName: 'War Movies', entries: entries)],
+        currentChannelId: 'war',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The 20:00 tick and the programme that starts at 20:00 must share an x.
+    expect(
+      (tester.getRect(find.text('20:00')).left - _cellRect(tester, 'P1').left).abs(),
+      lessThanOrEqualTo(0.5),
+      reason: 'the 20:00 tick must sit on the cell that starts at 20:00',
+    );
+
+    final tickBefore = tester.getRect(find.text('20:00')).left;
+    await tester.drag(find.text('P1'), const Offset(-160, 0));
+    await tester.pumpAndSettle();
+
+    expect(tester.getRect(find.text('20:00')).left, lessThan(tickBefore), reason: 'the grid scrolled');
+    // The strip is lazy, so a cell scrolled out of the cache is gone from the tree;
+    // check every cell that is still built.
+    var checked = 0;
+    for (var i = 0; i < entries.length; i++) {
+      final title = 'P${i + 1}';
+      if (find.text(title).evaluate().isEmpty) continue;
+      final tick = find.text(_clockLabel(entries[i].start));
+      expect(
+        (tester.getRect(tick).left - _cellRect(tester, title).left).abs(),
+        lessThanOrEqualTo(0.5),
+        reason: 'the ruler must stay aligned with the cells while $title scrolls',
+      );
+      checked++;
+    }
+    expect(checked, greaterThan(0), reason: 'at least one scrolled cell must still be built');
+
+    await tester.pumpWidget(const SizedBox());
+  });
+}
+
+/// The rect of the card showing [title]: the nearest [Container] ancestor of its
+/// text, which is the cell box minus the gutter.
+Rect _cellRect(WidgetTester tester, String title) =>
+    tester.getRect(find.ancestor(of: find.text(title), matching: find.byType(Container)).first);
+
+String _clockLabel(DateTime time) {
+  final local = time.toLocal();
+  String two(int value) => value.toString().padLeft(2, '0');
+  return '${two(local.hour)}:${two(local.minute)}';
 }
