@@ -491,6 +491,10 @@ void main() {
       reason: 'the 20:00 tick must sit on the cell that starts at 20:00',
     );
 
+    // The hour is emphasized; the half hour stays quiet.
+    expect(tester.widget<Text>(find.text('20:00')).style!.fontWeight, FontWeight.w700);
+    expect(tester.widget<Text>(find.text('20:30')).style!.fontWeight, FontWeight.w400);
+
     final tickBefore = tester.getRect(find.text('20:00')).left;
     await tester.drag(find.text('P1'), const Offset(-160, 0));
     await tester.pumpAndSettle();

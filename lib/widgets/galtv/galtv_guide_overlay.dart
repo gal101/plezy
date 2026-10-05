@@ -1086,7 +1086,13 @@ class _GalTvTimeRuler extends StatelessWidget {
                           maxLines: 1,
                           softWrap: false,
                           overflow: TextOverflow.clip,
-                          style: TextStyle(color: tokens.textMuted, fontSize: 11, height: 1.1),
+                          // The hour stands out; the half hour is a quieter mark.
+                          style: TextStyle(
+                            color: tokens.textMuted,
+                            fontSize: 11,
+                            height: 1.1,
+                            fontWeight: tick.minute == 0 ? FontWeight.w700 : FontWeight.w400,
+                          ),
                         ),
                         const Spacer(),
                         Container(width: 1, height: 6, color: tokens.text.withValues(alpha: 0.25)),
