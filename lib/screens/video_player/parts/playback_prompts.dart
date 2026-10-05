@@ -17,14 +17,16 @@ extension _VideoPlayerPlaybackPromptMethods on VideoPlayerScreenState {
       _logVideoCompleted('transition=${_transitionGate.transition.name}');
       return;
     }
-    // A GalTV item ending is a programme boundary, not a watched item: tell the
-    // owning tab so it can re-tune, then leave the route. No Play Next dialog
-    // and no scrobble — watch reporting is suppressed for the whole session
-    // (§4.3), and end-of-programme chaining is a later slice.
+    // A GalTV item ending is a programme boundary, not a watched item: no Play
+    // Next dialog and no scrobble — watch reporting is suppressed for the whole
+    // session (§4.3). Chain it **in place** (resolve the channel now, then the
+    // same seek-or-reload Sync-to-live applies) instead of leaving the route:
+    // exiting here dropped the viewer onto the tab's idle card whenever the
+    // schedule was momentarily unplayable at the boundary, and re-entering the
+    // player behind their back would trap them in a pop/re-push loop.
     if (widget.galTv != null) {
       _logVideoCompleted('galtv');
-      widget.galTv!.onProgrammeEnded?.call();
-      unawaited(_handleBackButton());
+      unawaited(_chainGalTvOnCompletion());
       return;
     }
     if (_episode.isResolvingCompletionAdjacency) {

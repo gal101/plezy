@@ -1,5 +1,13 @@
 part of '../../video_player_screen.dart';
 
+/// End-of-programme chaining: how many times to re-resolve when the schedule is
+/// momentarily unplayable at the boundary (a `flex` break, a mid-transition
+/// read), and the base delay between attempts — multiplied by the attempt
+/// number, so the retries back off (2 s, 4 s, 6 s, ~12 s total before the player
+/// hands back to the tab).
+const int _galTvChainAttempts = 3;
+const Duration _galTvChainRetryDelay = Duration(seconds: 2);
+
 /// The player's GalTV layer: fetch/cache/retry for the in-player guide, plus
 /// the toggle the controls' TV Guide button writes.
 ///
@@ -45,11 +53,8 @@ extension _VideoPlayerGalTvMethods on VideoPlayerScreenState {
   /// Snap the player back onto the tuned channel's live offset ("sync to live")
   /// after the viewer has seeked away from it.
   ///
-  /// Resolves what is airing on the channel *now* and branches on the underlying
-  /// file: a break/continuation segment of the same Plex item — the schedule
-  /// splits one movie into several slots with increasing `seekOffsetMs` — is
-  /// handled with a plain seek to the schedule's offset, while a genuinely new
-  /// programme is reloaded in place with the same swap channel surfing uses.
+  /// Resolves what is airing on the channel *now* and applies it — see
+  /// [_applyGalTvPlan] for the seek-or-reload decision.
   Future<void> _resyncGalTv() async {
     final resolver = widget.galTv?.channelResolver;
     final channelId = _galTvChannelId;
@@ -63,21 +68,87 @@ extension _VideoPlayerGalTvMethods on VideoPlayerScreenState {
         return;
       }
 
-      if (plan.plexRatingKey == _currentMetadata.id) {
-        // Same file: jump to the live offset, then re-mark the grid's "now".
-        await _seekPlayback(plan.seekOffset);
-        if (!mounted || _shuttingDown) return;
-        _adoptGalTvChannel(plan);
-        return;
-      }
-
-      // A different item is airing now — reuse the in-place switch path.
-      await _runGalTvSwitch(() async => plan);
+      await _applyGalTvPlan(plan);
     } catch (error, stackTrace) {
       if (!mounted) return;
       appLogger.w('GalTV resync failed', error: error, stackTrace: stackTrace);
       showErrorSnackBar(context, t.galtv.switchFailed);
     }
+  }
+
+  /// Apply an already-resolved plan to the running player.
+  ///
+  /// Branches on the underlying file: a break/continuation segment of the same
+  /// Plex item — the schedule splits one movie into several slots with
+  /// increasing `seekOffsetMs` — is handled with a plain seek to the schedule's
+  /// offset, while a genuinely new programme is reloaded in place with the same
+  /// swap channel surfing uses. Shared by Sync-to-live and end-of-programme
+  /// chaining, which differ only in how they obtain the plan.
+  Future<void> _applyGalTvPlan(GalTvTunePlan plan) async {
+    if (plan.plexRatingKey == _currentMetadata.id) {
+      // Same file: jump to the live offset, then re-mark the grid's "now".
+      await _seekPlayback(plan.seekOffset);
+      if (!mounted || _shuttingDown) return;
+      _adoptGalTvChannel(plan);
+      return;
+    }
+
+    // A different item is airing now — reuse the in-place switch path.
+    await _runGalTvSwitch(() async => plan);
+  }
+
+  /// The programme ended: keep the channel playing, in place.
+  ///
+  /// Applies the same plan Sync-to-live does, but **without leaving the route**.
+  /// Exiting on completion is what dropped the viewer onto the tab's idle card:
+  /// a programme boundary can land on a `flex` break or catch Tunarr
+  /// mid-transition, and the tab's re-tune then resolved nothing to play. A null
+  /// plan is therefore retried a few times, and only when the retries are
+  /// exhausted does the session hand back to the tab (the pre-chaining
+  /// behaviour), so a channel with a long dead gap cannot park on a finished
+  /// file forever.
+  Future<void> _chainGalTvOnCompletion() async {
+    final resolver = widget.galTv?.channelResolver;
+    final channelId = _galTvChannelId;
+    if (resolver == null || channelId == null) {
+      widget.galTv?.onProgrammeEnded?.call();
+      await _handleBackButton();
+      return;
+    }
+
+    for (var attempt = 0; attempt < _galTvChainAttempts; attempt++) {
+      // Always wait before the first resolve: at the instant of EOF the schedule
+      // usually still reports the item that just finished, and seeking to *its*
+      // offset would land back on the end — an EOF loop. Backing off also covers
+      // a boundary that lands on a `flex` break.
+      await Future<void>.delayed(_galTvChainRetryDelay * (attempt + 1));
+      if (!mounted || _shuttingDown || _galTvSwitching) return;
+
+      GalTvTunePlan? plan;
+      try {
+        plan = await resolver(channelId);
+      } catch (error, stackTrace) {
+        appLogger.w('GalTV chaining resolve failed', error: error, stackTrace: stackTrace);
+      }
+      if (!mounted || _shuttingDown) return;
+      if (plan == null) continue; // a break, or the schedule mid-transition
+
+      if (plan.plexRatingKey == _currentMetadata.id) {
+        // Same file. If the schedule still points at the tail of the item we just
+        // finished, there is nothing to play yet — wait for it to tick over
+        // rather than seeking straight back into EOF.
+        final durationMs = _currentMetadata.durationMs;
+        if (durationMs != null && plan.seekOffset.inMilliseconds >= durationMs - 1000) continue;
+      }
+
+      await _applyGalTvPlan(plan);
+      return;
+    }
+
+    // Nothing playable after the retries: hand back to the tab rather than
+    // parking on a finished file.
+    widget.galTv?.onProgrammeEnded?.call();
+    await _handleBackButton();
   }
 
   /// The shared switch: resolve the target through the tab, fetch its Plex item,
