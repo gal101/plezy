@@ -399,7 +399,12 @@ extension _VideoPlayerPlaybackServiceMethods on VideoPlayerScreenState {
     // Live reporting belongs to [_sendLiveTimeline]'s heartbeats against the
     // tuner session. A [PlaybackProgressTracker] here would post a second,
     // item-shaped timeline for a channel placeholder that has no watch state.
-    if (!widget.isLive) {
+    // GalTV is suppressed for the same reason (§4.3): a channel is a schedule,
+    // not a viewed item, so no `/:timeline` may be posted for its items. This
+    // is also what makes the tracker's `onScrobbled` sibling marks below, and
+    // `PlaybackProgressTracker.markWatched` downstream of it, unreachable for
+    // GalTV.
+    if (!_suppressWatchReporting) {
       _rebindProgressTracker(
         metadata: metadata,
         mediaClient: mediaClient,
@@ -417,11 +422,11 @@ extension _VideoPlayerPlaybackServiceMethods on VideoPlayerScreenState {
     // short-circuits cleanly.
     if (mediaClient != null) {
       // Discord renders a timeline the live placeholder does not have; the
-      // tracker coordinator takes the live decision itself.
-      if (!widget.isLive) {
+      // tracker coordinator takes the live/GalTV decision itself.
+      if (!_suppressWatchReporting) {
         unawaited(DiscordRPCService.instance.startPlayback(metadata, mediaClient));
       }
-      unawaited(TrackerCoordinator.instance.startPlayback(metadata, mediaClient, isLive: widget.isLive));
+      unawaited(TrackerCoordinator.instance.startPlayback(metadata, mediaClient, isLive: _suppressWatchReporting));
     }
   }
 

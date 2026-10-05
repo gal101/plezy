@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../../media/media_item.dart';
 import '../../../media/media_version.dart';
@@ -66,6 +66,17 @@ class TrackControlsState {
   final VoidCallback? onToggleAmbientLighting;
   final bool canControl;
   final bool isLive;
+
+  /// GalTV guide toggle: non-null only when the session carries an injected
+  /// guide provider. [TrackChapterControls] builds the TV Guide button from it
+  /// (it is the same notifier the screen-level overlay listens to).
+  final ValueListenable<bool>? galTvGuideVisible;
+  final VoidCallback? onToggleGalTvGuide;
+
+  /// "Sync to live" action — non-null only for a GalTV session. The button is
+  /// built from it, beside the guide toggle.
+  final VoidCallback? onResyncGalTv;
+
   final bool subtitlesVisible;
   final bool showQueueButton;
   final Function(MediaItem)? onQueueItemSelected;
@@ -131,6 +142,9 @@ class TrackControlsState {
     this.onToggleAmbientLighting,
     this.canControl = true,
     this.isLive = false,
+    this.galTvGuideVisible,
+    this.onToggleGalTvGuide,
+    this.onResyncGalTv,
     this.subtitlesVisible = true,
     this.showQueueButton = false,
     this.onQueueItemSelected,

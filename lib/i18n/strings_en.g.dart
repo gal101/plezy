@@ -89,6 +89,8 @@ class Translations with BaseTranslations<AppLocale, Translations> {
 	late final Translations$serverTasks$en serverTasks = Translations$serverTasks$en.internal(_root);
 	late final Translations$trakt$en trakt = Translations$trakt$en.internal(_root);
 	late final Translations$seerr$en seerr = Translations$seerr$en.internal(_root);
+	late final Translations$tunarr$en tunarr = Translations$tunarr$en.internal(_root);
+	late final Translations$galtv$en galtv = Translations$galtv$en.internal(_root);
 	late final Translations$services$en services = Translations$services$en.internal(_root);
 	late final Translations$addServer$en addServer = Translations$addServer$en.internal(_root);
 }
@@ -101,8 +103,8 @@ class Translations$app$en {
 
 	// Translations
 
-	/// en: 'Plezy'
-	String get title => 'Plezy';
+	/// en: 'GalTV'
+	String get title => 'GalTV';
 }
 
 // Path: auth
@@ -2044,6 +2046,12 @@ class Translations$videoControls$en {
 
 	/// en: 'Audio'
 	String get audioLabel => 'Audio';
+
+	/// en: 'Direct Play'
+	String get playMethodDirectPlay => 'Direct Play';
+
+	/// en: 'Transcoding'
+	String get playMethodTranscode => 'Transcoding';
 
 	/// en: 'Subtitles'
 	String get subtitlesLabel => 'Subtitles';
@@ -5556,6 +5564,90 @@ class Translations$seerr$en {
 	String get permissionRevoked => 'You no longer have permission to request this';
 }
 
+// Path: tunarr
+class Translations$tunarr$en {
+	Translations$tunarr$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'Tunarr'
+	String get title => 'Tunarr';
+
+	/// en: 'Connect to Tunarr'
+	String get connectTitle => 'Connect to Tunarr';
+
+	/// en: 'Tunarr address'
+	String get serverUrl => 'Tunarr address';
+
+	/// en: 'Sign in with Plex'
+	String get signInWithPlex => 'Sign in with Plex';
+
+	/// en: 'Instance'
+	String get instance => 'Instance';
+
+	/// en: 'Disconnect Tunarr?'
+	String get disconnectConfirm => 'Disconnect Tunarr?';
+
+	/// en: 'The GalTV tab will be hidden until you sign in again.'
+	String get disconnectConfirmBody => 'The GalTV tab will be hidden until you sign in again.';
+
+	/// en: 'GalTV tab'
+	String get galtvToggle => 'GalTV tab';
+
+	/// en: 'Show the GalTV tab in the navigation'
+	String get galtvToggleSubtitle => 'Show the GalTV tab in the navigation';
+}
+
+// Path: galtv
+class Translations$galtv$en {
+	Translations$galtv$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'GalTV'
+	String get tabTitle => 'GalTV';
+
+	/// en: 'No channels yet'
+	String get emptyTitle => 'No channels yet';
+
+	/// en: 'Create a channel in Tunarr and it will show up here.'
+	String get emptyBody => 'Create a channel in Tunarr and it will show up here.';
+
+	/// en: 'Watch'
+	String get watch => 'Watch';
+
+	/// en: 'Could not tune this channel. Check that Tunarr is reachable, then try again.'
+	String get tuneFailed => 'Could not tune this channel. Check that Tunarr is reachable, then try again.';
+
+	/// en: 'Nothing is playing on this channel right now.'
+	String get nothingPlaying => 'Nothing is playing on this channel right now.';
+
+	/// en: 'Could not switch to that channel. Try again.'
+	String get switchFailed => 'Could not switch to that channel. Try again.';
+
+	/// en: 'Sync to live'
+	String get resync => 'Sync to live';
+
+	/// en: 'Channel −'
+	String get previousChannel => 'Channel −';
+
+	/// en: 'Channel +'
+	String get nextChannel => 'Channel +';
+
+	/// en: 'Tuning…'
+	String get tuning => 'Tuning…';
+
+	/// en: 'Watching'
+	String get watching => 'Watching';
+
+	/// en: 'NOW'
+	String get nowBadge => 'NOW';
+}
+
 // Path: services
 class Translations$services$en {
 	Translations$services$en.internal(this._root);
@@ -5921,6 +6013,15 @@ class Translations$hotkeys$actions$en {
 
 	/// en: 'Take Screenshot'
 	String get screenshot => 'Take Screenshot';
+
+	/// en: 'Toggle TV Guide'
+	String get galTvGuide => 'Toggle TV Guide';
+
+	/// en: 'Next Channel'
+	String get galTvChannelUp => 'Next Channel';
+
+	/// en: 'Previous Channel'
+	String get galTvChannelDown => 'Previous Channel';
 }
 
 // Path: videoControls.pipErrors
@@ -7227,6 +7328,9 @@ class Translations$services$names$en {
 	/// en: 'Seerr'
 	String get seerr => 'Seerr';
 
+	/// en: 'Tunarr'
+	String get tunarr => 'Tunarr';
+
 	/// en: 'MDBList'
 	String get mdblist => 'MDBList';
 }
@@ -7359,7 +7463,7 @@ class Translations$services$libraryFilter$en {
 extension on Translations {
 	dynamic _flatMapFunction(String path) {
 		return switch (path) {
-			'app.title' => 'Plezy',
+			'app.title' => 'GalTV',
 			'auth.signInWithPlex' => 'Sign in with Plex',
 			'auth.showQRCode' => 'Show QR Code',
 			'auth.authenticate' => 'Authenticate',
@@ -7820,6 +7924,9 @@ extension on Translations {
 			'hotkeys.actions.shaderToggle' => 'Toggle Shaders',
 			'hotkeys.actions.skipMarker' => 'Skip Intro/Credits',
 			'hotkeys.actions.screenshot' => 'Take Screenshot',
+			'hotkeys.actions.galTvGuide' => 'Toggle TV Guide',
+			'hotkeys.actions.galTvChannelUp' => 'Next Channel',
+			'hotkeys.actions.galTvChannelDown' => 'Previous Channel',
 			'fileInfo.title' => 'File Info',
 			'fileInfo.overview' => 'Overview',
 			'fileInfo.video' => 'Video',
@@ -7868,11 +7975,11 @@ extension on Translations {
 			'fileInfo.anamorphic' => 'Anamorphic',
 			'fileInfo.referenceFrames' => 'Reference Frames',
 			'fileInfo.dynamicRange' => 'Dynamic Range',
+			_ => null,
+		} ?? switch (path) {
 			'fileInfo.dolbyVision' => 'Dolby Vision',
 			'fileInfo.dolbyVisionLevel' => 'Dolby Vision Level',
 			'fileInfo.dolbyVisionVersion' => 'Dolby Vision Version',
-			_ => null,
-		} ?? switch (path) {
 			'fileInfo.dolbyVisionLayers' => 'Dolby Vision Layers',
 			'fileInfo.baseLayerCompatibility' => 'Base Layer Compatibility',
 			'fileInfo.avcBitstream' => 'AVC Bitstream',
@@ -8010,6 +8117,8 @@ extension on Translations {
 			'tooltips.markAsUnwatched' => 'Mark as unwatched',
 			'audioTracks.track' => ({required Object n}) => 'Audio Track ${n}',
 			'videoControls.audioLabel' => 'Audio',
+			'videoControls.playMethodDirectPlay' => 'Direct Play',
+			'videoControls.playMethodTranscode' => 'Transcoding',
 			'videoControls.subtitlesLabel' => 'Subtitles',
 			'videoControls.addTime' => ({required Object amount, required Object unit}) => '+${amount}${unit}',
 			'videoControls.letterbox' => 'Letterbox',
@@ -8380,13 +8489,13 @@ extension on Translations {
 			'errors.failedToVerifyToken' => ({required Object error}) => 'Failed to verify token: ${error}',
 			'errors.failedToSwitchProfile' => ({required Object displayName}) => 'Failed to switch to ${displayName}',
 			'errors.failedToDeleteProfile' => ({required Object displayName}) => 'Failed to delete ${displayName}',
+			_ => null,
+		} ?? switch (path) {
 			'errors.failedToRate' => 'Couldn\'t update rating',
 			'errors.reasonTimedOut' => 'the connection timed out',
 			'errors.reasonUnreachable' => 'the server could not be reached',
 			'errors.reasonRefused' => 'the server refused the request',
 			'errors.reasonNotFound' => 'the item is no longer on the server',
-			_ => null,
-		} ?? switch (path) {
 			'errors.reasonServerError' => 'the server reported an error',
 			'errors.reasonCancelled' => 'the request was cancelled',
 			'errors.reasonUnexpected' => 'an unexpected error occurred',
@@ -8894,13 +9003,13 @@ extension on Translations {
 			'watchTogether.makeHostQuestion' => 'Transfer host?',
 			'watchTogether.makeHostConfirm' => ({required Object name}) => '${name} will control playback and drive the session for everyone.',
 			'watchTogether.transfer' => 'Transfer',
+			_ => null,
+		} ?? switch (path) {
 			'watchTogether.hostChangedTo' => ({required Object name}) => '${name} is now the host',
 			'watchTogether.youAreNowHost' => 'You are now the host',
 			'watchTogether.hostTransferFailed' => ({required Object name}) => 'Couldn\'t make ${name} the host',
 			'watchTogether.watchingWithOthers' => 'Watching with others',
 			'watchTogether.endSession' => 'End Session',
-			_ => null,
-		} ?? switch (path) {
 			'watchTogether.leaveSession' => 'Leave Session',
 			'watchTogether.endSessionQuestion' => 'End Session?',
 			'watchTogether.leaveSessionQuestion' => 'Leave Session?',
@@ -9393,6 +9502,30 @@ extension on Translations {
 			'seerr.sessionRejectedAfterReauth' => 'The session was rejected after signing in again',
 			'seerr.permissionDenied' => 'Seerr denied this action: your account no longer has the required permission',
 			'seerr.permissionRevoked' => 'You no longer have permission to request this',
+			'tunarr.title' => 'Tunarr',
+			'tunarr.connectTitle' => 'Connect to Tunarr',
+			'tunarr.serverUrl' => 'Tunarr address',
+			'tunarr.signInWithPlex' => 'Sign in with Plex',
+			'tunarr.instance' => 'Instance',
+			'tunarr.disconnectConfirm' => 'Disconnect Tunarr?',
+			'tunarr.disconnectConfirmBody' => 'The GalTV tab will be hidden until you sign in again.',
+			'tunarr.galtvToggle' => 'GalTV tab',
+			'tunarr.galtvToggleSubtitle' => 'Show the GalTV tab in the navigation',
+			'galtv.tabTitle' => 'GalTV',
+			'galtv.emptyTitle' => 'No channels yet',
+			'galtv.emptyBody' => 'Create a channel in Tunarr and it will show up here.',
+			'galtv.watch' => 'Watch',
+			'galtv.tuneFailed' => 'Could not tune this channel. Check that Tunarr is reachable, then try again.',
+			'galtv.nothingPlaying' => 'Nothing is playing on this channel right now.',
+			_ => null,
+		} ?? switch (path) {
+			'galtv.switchFailed' => 'Could not switch to that channel. Try again.',
+			'galtv.resync' => 'Sync to live',
+			'galtv.previousChannel' => 'Channel −',
+			'galtv.nextChannel' => 'Channel +',
+			'galtv.tuning' => 'Tuning…',
+			'galtv.watching' => 'Watching',
+			'galtv.nowBadge' => 'NOW',
 			'services.title' => 'Services',
 			'services.hubSubtitle' => 'Sync watch progress and request new titles.',
 			'services.integrations' => 'Integrations',
@@ -9407,14 +9540,13 @@ extension on Translations {
 			'services.names.anilist' => 'AniList',
 			'services.names.simkl' => 'Simkl',
 			'services.names.seerr' => 'Seerr',
+			'services.names.tunarr' => 'Tunarr',
 			'services.names.mdblist' => 'MDBList',
 			'services.simklReconnect.title' => 'Reconnect Simkl',
 			'services.simklReconnect.subtitle' => 'Simkl is retiring the sign-in method this connection uses. Reconnecting opens simkl.com to approve Plezy — Plezy never sees your password. Your watch history stays on Simkl.',
 			'services.deviceCode.title' => ({required Object service}) => 'Activate Plezy on ${service}',
 			'services.deviceCode.instructions' => 'Scan the QR code, or visit the address below and enter this code:',
 			'services.deviceCode.openToActivate' => ({required Object service}) => 'Open ${service} to activate',
-			_ => null,
-		} ?? switch (path) {
 			'services.deviceCode.copyCode' => 'Copy activation code',
 			'services.deviceCode.waitingForAuthorization' => 'Waiting for authorization…',
 			'services.deviceCode.codeCopied' => 'Code copied',

@@ -29,6 +29,7 @@ import '../utils/scroll_utils.dart';
 import '../utils/library_grouping.dart';
 import 'music/equalizer_icon.dart';
 import '../providers/multi_server_provider.dart';
+import '../providers/tunarr_account_provider.dart';
 import '../services/fullscreen_state_manager.dart';
 import '../theme/mono_tokens.dart';
 import '../widgets/backend_badge.dart';
@@ -471,6 +472,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
   static const _kNowPlaying = 'nowPlaying';
   static const _kLibraries = 'libraries';
   static const _kSearch = 'search';
+  static const _kGaltv = 'galtv';
   static const _kDownloads = 'downloads';
   static const _kSettings = 'settings';
   static const _kReconnect = 'reconnect';
@@ -645,6 +647,8 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
         return _kSettings;
       case NavigationTabId.liveTv:
         return 'liveTv';
+      case NavigationTabId.galtv:
+        return _kGaltv;
     }
   }
 
@@ -677,6 +681,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
     required bool hasLiveTv,
     required bool hasNowPlaying,
     required bool hasExplore,
+    required bool hasGalTv,
   }) {
     return {
       _kHome,
@@ -684,6 +689,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
       _kLibraries,
       if (hasExplore) _kExplore,
       _kSearch,
+      if (hasGalTv) _kGaltv,
       if (_showDownloads) _kDownloads,
       _kSettings,
       _kReconnect,
@@ -758,6 +764,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
     required bool hasLiveTv,
     required bool hasNowPlaying,
     required bool hasExplore,
+    required bool hasGalTv,
     required bool isCollapsed,
   }) {
     return [
@@ -779,6 +786,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
         if (hasLiveTv) 'liveTv',
         if (hasExplore) _kExplore,
         _kSearch,
+        if (hasGalTv) _kGaltv,
       ],
       if (_showDownloads) _kDownloads,
       _kSettings,
@@ -890,6 +898,9 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
     // mini-player for that.
     final musicService = context.watch<MusicPlaybackService?>();
     final nowPlayingTrack = widget.isOfflineMode || !PlatformDetector.isTV() ? null : musicService?.currentTrack;
+    // Nullable watch: hosts without the profile session scope (rail tests)
+    // simply never show the GalTV item.
+    final tunarrAccount = context.watch<TunarrAccountProvider?>();
 
     // Listen to fullscreen + the groupLibrariesByServer / showExploreTab
     // settings so the rail rebuilds when they are toggled in Appearance, and to
@@ -899,10 +910,15 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
         FullscreenStateManager(),
         SettingsService.instance.listenable(SettingsService.groupLibrariesByServer),
         SettingsService.instance.listenable(SettingsService.showExploreTab),
+        SettingsService.instance.listenable(SettingsService.enableGaltv),
         SettingsService.instance.listenable(SettingsService.librariesSectionExpanded),
       ]),
       builder: (context, _) {
         final hasExplore = hasExploreSource && SettingsService.instance.read(SettingsService.showExploreTab);
+        // GalTV is visible only while a Tunarr session is connected AND the
+        // user-facing toggle is on.
+        final hasGalTv =
+            (tunarrAccount?.isConnected ?? false) && SettingsService.instance.read(SettingsService.enableGaltv);
         // Server grouping: only when multi-server AND the user-facing toggle is on.
         final groupByServerSetting = SettingsService.instance.read(SettingsService.groupLibrariesByServer);
         final showServerHeaders = serverIds.length > 1 && groupByServerSetting;
@@ -927,6 +943,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
             hasLiveTv: hasLiveTv,
             hasNowPlaying: nowPlayingTrack != null,
             hasExplore: hasExplore,
+            hasGalTv: hasGalTv,
           ),
         );
         final focusOrder = _buildFocusOrder(
@@ -936,6 +953,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
           hasLiveTv: hasLiveTv,
           hasNowPlaying: nowPlayingTrack != null,
           hasExplore: hasExplore,
+          hasGalTv: hasGalTv,
           isCollapsed: isCollapsed,
         );
         _debugAssertUniqueFocusOrder(focusOrder);
@@ -1075,6 +1093,18 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
                                         isCollapsed: isCollapsed,
                                       ),
                                       const SizedBox(height: _itemGap),
+                                      if (hasGalTv) ...[
+                                        _buildNavItem(
+                                          icon: Symbols.tv_rounded,
+                                          selectedIcon: Symbols.tv_rounded,
+                                          label: Translations.of(context).galtv.tabTitle,
+                                          isSelected: widget.selectedTab == NavigationTabId.galtv,
+                                          onTap: () => widget.onDestinationSelected(NavigationTabId.galtv),
+                                          focusNode: _focusTracker.get(_kGaltv),
+                                          isCollapsed: isCollapsed,
+                                        ),
+                                        const SizedBox(height: _itemGap),
+                                      ],
                                     ],
                                     // Downloads (hidden on Apple TV — no user
                                     // file storage)

@@ -18,31 +18,57 @@ extension _VideoPlayerEpisodeNavigationMethods on VideoPlayerScreenState {
   /// visuals are keyboard/dpad-gated).
   void _showChromeForSwappedItem() {
     if (!mounted) return;
+    // A GalTV switch driven from the guide must leave the guide in charge: the
+    // viewer is still surfing, and `show(focusPlayPause: true)` would queue a
+    // play/pause focus that lands a frame later, after the guide has already
+    // re-focused the newly tuned row. The visible symptom was "focus moves to the
+    // player but the overlay is still on".
+    if (widget.galTv?.guideVisible.value ?? false) return;
     _chromeController.show(focusPlayPause: true);
   }
+
+  /// Whether a GalTV session has a neighbour in [delta]'s direction, answered by
+  /// the tab's channel adjacency. A session without a surfer offers no step.
+  bool _hasGalTvNeighbour(int delta) => widget.galTv?.hasSiblingChannel?.call(delta) ?? false;
 
   /// Whether the transport's next/previous commands have somewhere to go.
   ///
   /// One answer for every entry point — the on-screen buttons, the OS media
   /// session and the companion remote — so no surface can advertise a step
-  /// another refuses. Live TV steps through the channel list, and each
-  /// direction is answered by its own list adjacency. Off live, `next` needs
-  /// a loaded next item, while `previous` always has a target for an episode:
+  /// another refuses. Live TV and GalTV step through a channel list, each
+  /// direction answered by its own adjacency. Off a channel, `next` needs a
+  /// loaded next item, while `previous` always has a target for an episode:
   /// [_restartOrPlayPrevious] restarts when nothing earlier is loaded.
-  bool get _hasNextItem => widget.isLive ? _hasNextChannel : _episode.next != null;
+  bool get _hasNextItem => widget.isLive
+      ? _hasNextChannel
+      : widget.galTv != null
+      ? _hasGalTvNeighbour(1)
+      : _episode.next != null;
 
-  bool get _hasPreviousItem =>
-      widget.isLive ? _hasPreviousChannel : _currentMetadata.isEpisode || _episode.previous != null;
+  bool get _hasPreviousItem => widget.isLive
+      ? _hasPreviousChannel
+      : widget.galTv != null
+      ? _hasGalTvNeighbour(-1)
+      : _currentMetadata.isEpisode || _episode.previous != null;
 
-  /// The transport's next command: a channel zap on live TV, the next
-  /// episode/queue item otherwise. Both targets no-op without one.
-  Future<void> _navigateToNextItem() => widget.isLive ? _switchLiveChannel(1) : _playNext();
+  /// The transport's next command: a channel zap on live TV, a channel surf on a
+  /// GalTV session, the next episode/queue item otherwise. Every target no-ops
+  /// without somewhere to go.
+  Future<void> _navigateToNextItem() {
+    if (widget.isLive) return _switchLiveChannel(1);
+    if (widget.galTv != null) return _surfGalTvChannel(1);
+    return _playNext();
+  }
 
-  /// The transport's previous command: a channel zap on live TV; otherwise a
-  /// restart or the previous item. A live stream has no "restart" — an
-  /// absolute seek to zero would drag the playhead off the live edge — so
-  /// the VOD fallback is unreachable here by construction.
-  Future<void> _navigateToPreviousItem() => widget.isLive ? _switchLiveChannel(-1) : _restartOrPlayPrevious();
+  /// The transport's previous command: a channel zap on live TV, a channel surf
+  /// on GalTV; otherwise a restart or the previous item. A live stream has no
+  /// "restart" — an absolute seek to zero would drag the playhead off the live
+  /// edge — so that VOD fallback is unreachable here by construction.
+  Future<void> _navigateToPreviousItem() {
+    if (widget.isLive) return _switchLiveChannel(-1);
+    if (widget.galTv != null) return _surfGalTvChannel(-1);
+    return _restartOrPlayPrevious();
+  }
 
   Future<void> _playNext() async {
     if (!_canNavigateMediaItems()) return;

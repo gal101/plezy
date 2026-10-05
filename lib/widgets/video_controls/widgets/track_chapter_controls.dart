@@ -367,6 +367,51 @@ class TrackChapterControls extends StatelessWidget {
               onPressed: state.onToggleFullscreen,
             ),
           );
+          buttonIndex++;
+        }
+
+        // Sync-to-live button — GalTV sessions only. Snaps the player back onto
+        // the channel's live offset after the viewer has seeked away from it.
+        final onResyncGalTv = state.onResyncGalTv;
+        if (onResyncGalTv != null) {
+          final currentIndex = buttonIndex;
+          buttons.add(
+            _buildTrackButton(
+              buttonIndex: currentIndex,
+              icon: Symbols.sync_rounded,
+              tooltip: t.galtv.resync,
+              semanticLabel: t.galtv.resync,
+              buttons: buttons,
+              onPressed: onResyncGalTv,
+            ),
+          );
+          buttonIndex++;
+        }
+
+        // TV Guide button — GalTV sessions with an injected guide only. Built
+        // beside fullscreen and outside its desktop gate so it appears on TV
+        // too (TV takes the desktop controls branch), and it shares its
+        // notifier with the screen-level overlay.
+        final galTvGuideVisible = state.galTvGuideVisible;
+        final onToggleGalTvGuide = state.onToggleGalTvGuide;
+        if (galTvGuideVisible != null && onToggleGalTvGuide != null) {
+          final currentIndex = buttonIndex;
+          buttons.add(
+            ValueListenableBuilder<bool>(
+              valueListenable: galTvGuideVisible,
+              builder: (context, guideVisible, _) => _buildTrackButton(
+                buttonIndex: currentIndex,
+                icon: Symbols.tv_rounded,
+                tooltip: t.liveTv.guide,
+                semanticLabel: t.liveTv.guide,
+                isActive: guideVisible,
+                checked: guideVisible,
+                buttons: buttons,
+                onPressed: onToggleGalTvGuide,
+              ),
+            ),
+          );
+          buttonIndex++;
         }
 
         return IntrinsicHeight(

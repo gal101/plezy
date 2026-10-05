@@ -13,8 +13,10 @@ import 'player_chrome_controller.dart';
 import 'widgets/circular_control_button.dart';
 import 'widgets/content_strip.dart';
 import 'widgets/content_strip_panel.dart';
+import 'widgets/channel_logo.dart';
 import 'widgets/first_frame_guard.dart';
 import 'widgets/play_pause_stream_builder.dart';
+import 'widgets/play_method_tag.dart';
 import 'widgets/live_timeline_bar.dart';
 import 'widgets/video_controls_header.dart';
 import 'widgets/video_timeline_bar.dart';
@@ -52,6 +54,21 @@ class MobileVideoControls extends StatefulWidget {
 
   /// Whether the user can control playback (false in host-only mode for non-host).
   final bool canControl;
+
+  /// Whether the server is transcoding this item — drives the Direct Play /
+  /// Transcoding status line under the timeline.
+  final bool isTranscoding;
+
+  /// Whether this is a GalTV session: the previous/next buttons step the channel
+  /// rather than the episode.
+  final bool isGalTv;
+
+  /// The tuned GalTV channel's logo, shown beside the title. Null outside GalTV
+  /// and for a channel with no icon.
+  final String? channelLogoUrl;
+
+  /// Headers the logo request needs — the gate authenticates images too.
+  final Map<String, String>? logoHeaders;
 
   /// Notifier for whether first video frame has rendered (shows loading state when false).
   final ValueNotifier<bool>? hasFirstFrame;
@@ -109,6 +126,10 @@ class MobileVideoControls extends StatefulWidget {
     this.onNext,
     this.onPrevious,
     this.canControl = true,
+    this.isTranscoding = false,
+    this.isGalTv = false,
+    this.channelLogoUrl,
+    this.logoHeaders,
     this.hasFirstFrame,
     this.thumbnailDataBuilder,
     this.isLive = false,
@@ -325,6 +346,9 @@ class _MobileVideoControlsState extends State<MobileVideoControls> with SingleTi
         child: VideoControlsHeader(
           metadata: widget.metadata,
           style: VideoHeaderStyle.multiLine,
+          leading: widget.channelLogoUrl == null
+              ? null
+              : ChannelLogo(url: widget.channelLogoUrl!, size: 28, headers: widget.logoHeaders),
           onCancelAutoHide: widget.onCancelAutoHide,
           onStartAutoHide: widget.onStartAutoHide,
           trailing: widget.trackChapterControls,
@@ -353,40 +377,53 @@ class _MobileVideoControlsState extends State<MobileVideoControls> with SingleTi
     return PlayPauseStreamBuilder(
       player: widget.player,
       builder: (context, isPlaying) {
-        return Row(
-          mainAxisAlignment: .center,
+        return Stack(
+          alignment: Alignment.center,
           children: [
-            if (!widget.isLive) ...[
-              CircularControlButton(
-                semanticLabel: t.videoControls.previousButton,
-                icon: Symbols.skip_previous_rounded,
-                iconSize: 48,
-                onPressed: widget.onPrevious,
-              ),
-              const SizedBox(width: 24),
-            ],
-            CircularControlButton(
-              semanticLabel: isPlaying ? t.videoControls.pauseButton : t.videoControls.playButton,
-              icon: isPlaying ? Symbols.pause_rounded : Symbols.play_arrow_rounded,
-              iconSize: 72,
-              onPressed: () {
-                widget.onPlayPause();
-                if (isPlaying) {
-                  widget.onCancelAutoHide?.call();
-                } else {
-                  widget.onStartAutoHide?.call();
-                }
-              },
+            Row(
+              mainAxisAlignment: .center,
+              children: [
+                if (!widget.isLive) ...[
+                  CircularControlButton(
+                    semanticLabel: widget.isGalTv ? t.galtv.previousChannel : t.videoControls.previousButton,
+                    icon: widget.isGalTv ? Symbols.keyboard_double_arrow_left_rounded : Symbols.skip_previous_rounded,
+                    iconSize: 48,
+                    onPressed: widget.onPrevious,
+                  ),
+                  const SizedBox(width: 24),
+                ],
+                CircularControlButton(
+                  semanticLabel: isPlaying ? t.videoControls.pauseButton : t.videoControls.playButton,
+                  icon: isPlaying ? Symbols.pause_rounded : Symbols.play_arrow_rounded,
+                  iconSize: 72,
+                  onPressed: () {
+                    widget.onPlayPause();
+                    if (isPlaying) {
+                      widget.onCancelAutoHide?.call();
+                    } else {
+                      widget.onStartAutoHide?.call();
+                    }
+                  },
+                ),
+                if (!widget.isLive) ...[
+                  const SizedBox(width: 24),
+                  CircularControlButton(
+                    semanticLabel: widget.isGalTv ? t.galtv.nextChannel : t.videoControls.nextButton,
+                    icon: widget.isGalTv ? Symbols.keyboard_double_arrow_right_rounded : Symbols.skip_next_rounded,
+                    iconSize: 48,
+                    onPressed: widget.onNext,
+                  ),
+                ],
+              ],
             ),
-            if (!widget.isLive) ...[
-              const SizedBox(width: 24),
-              CircularControlButton(
-                semanticLabel: t.videoControls.nextButton,
-                icon: Symbols.skip_next_rounded,
-                iconSize: 48,
-                onPressed: widget.onNext,
-              ),
-            ],
+            // Delivery method, in line with the player buttons. The bottom bar is
+            // a full-width timeline with no room beside it (a Row starves the
+            // timestamps), so the tag rides the transport cluster's band instead —
+            // same relationship as the desktop controls' button row.
+            Align(
+              alignment: Alignment.centerRight,
+              child: PlayMethodTag(isTranscoding: widget.isTranscoding),
+            ),
           ],
         );
       },

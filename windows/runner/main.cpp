@@ -16,9 +16,12 @@ wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev, _In_ wchar_t* command
   // created. (On a stock engine the flag is a no-op and compositing breaks.)
   ::SetEnvironmentVariableW(L"FLUTTER_WINDOWS_DCOMP", L"1");
 
-  HANDLE mutex = CreateMutex(nullptr, TRUE, L"com.edde746.Plezy.SingleInstance");
+  // Renamed together with the window title: a mutex shared with stock Plezy
+  // would make GalTV refuse to start while Plezy runs (it would FindWindow a
+  // title that does not exist, wait out the 20 s hold below, then exit).
+  HANDLE mutex = CreateMutex(nullptr, TRUE, L"com.edde746.GalTV.SingleInstance");
   if (GetLastError() == ERROR_ALREADY_EXISTS) {
-    HWND existing = FindWindow(L"FLUTTER_RUNNER_WIN32_WINDOW", L"Plezy");
+    HWND existing = FindWindow(L"FLUTTER_RUNNER_WIN32_WINDOW", L"GalTV");
     if (existing && IsWindowVisible(existing)) {
       ShowWindow(existing, SW_RESTORE);
       SetForegroundWindow(existing);
@@ -67,7 +70,7 @@ wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev, _In_ wchar_t* command
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"Plezy", origin, size)) {
+  if (!window.Create(L"GalTV", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

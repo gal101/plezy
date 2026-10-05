@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../i18n/strings.g.dart';
 import '../../models/catalog/catalog_item.dart';
 import '../../providers/seerr_account_provider.dart';
+import '../../providers/tunarr_account_provider.dart';
 import '../../services/discord_rpc_service.dart';
 import '../../services/settings_service.dart';
 import '../../widgets/app_icon.dart';
@@ -15,6 +16,8 @@ import '../../widgets/setting_tile.dart';
 import '../../widgets/settings_section.dart';
 import 'seerr_connect_screen.dart';
 import 'seerr_settings_screen.dart';
+import 'tunarr_connect_screen.dart';
+import 'tunarr_settings_screen.dart';
 import 'tracker_service_info.dart';
 
 /// Unified hub for all connected services: the watch-progress trackers
@@ -39,7 +42,7 @@ class ServicesSettingsScreen extends StatelessWidget {
                 ).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
             ),
-            SettingsGroup(children: [for (final info in TrackerServiceInfo.all) _TrackerHubRow(info), _seerr()]),
+            SettingsGroup(children: [for (final info in TrackerServiceInfo.all) _TrackerHubRow(info), _seerr(), _tunarr()]),
             if (DiscordRPCService.isAvailable)
               SettingsGroup(
                 title: t.services.integrations,
@@ -69,6 +72,25 @@ class ServicesSettingsScreen extends StatelessWidget {
           context,
           MaterialPageRoute(
             builder: (_) => account.isConnected ? const SeerrSettingsScreen() : const SeerrConnectScreen(),
+          ),
+        );
+      },
+    ),
+  );
+
+  /// Tunarr is a schedule source, not a request server: the row opens its
+  /// connect screen until a session exists, then its settings screen (which
+  /// carries the GalTV tab toggle).
+  Widget _tunarr() => Consumer<TunarrAccountProvider>(
+    builder: (context, account, _) => _ServiceHubRow(
+      leading: const AppIcon(Symbols.tv_rounded, fill: 1),
+      title: t.services.names.tunarr,
+      username: account.isConnected ? account.displayName : null,
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => account.isConnected ? const TunarrSettingsScreen() : const TunarrConnectScreen(),
           ),
         );
       },

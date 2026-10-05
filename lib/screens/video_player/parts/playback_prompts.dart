@@ -10,9 +10,21 @@ extension _VideoPlayerPlaybackPromptMethods on VideoPlayerScreenState {
       return;
     }
     // Ignore spurious EOF from the old file during an in-place media-source
-    // transition (episode swap, transcode restart, channel switch).
+    // transition (episode swap, transcode restart, channel switch). GalTV has
+    // no chaining yet, but a quality/track switch still reloads in place and
+    // must not be mistaken for a programme boundary.
     if (_transitionGate.transition != PlaybackTransition.idle) {
       _logVideoCompleted('transition=${_transitionGate.transition.name}');
+      return;
+    }
+    // A GalTV item ending is a programme boundary, not a watched item: tell the
+    // owning tab so it can re-tune, then leave the route. No Play Next dialog
+    // and no scrobble — watch reporting is suppressed for the whole session
+    // (§4.3), and end-of-programme chaining is a later slice.
+    if (widget.galTv != null) {
+      _logVideoCompleted('galtv');
+      widget.galTv!.onProgrammeEnded?.call();
+      unawaited(_handleBackButton());
       return;
     }
     if (_episode.isResolvingCompletionAdjacency) {

@@ -13,6 +13,7 @@ import 'package:flutter/gestures.dart'
         PointerSignalEvent,
         PointerUpEvent,
         kDoubleTapTimeout;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:plezy/widgets/app_icon.dart';
 import 'package:material_symbols_icons/symbols.dart';
@@ -625,6 +626,31 @@ class PlexVideoControls extends StatefulWidget {
   /// Shared controller for player chrome visibility, auto-hide, and layout state.
   final PlayerChromeController chromeController;
 
+  /// GalTV guide toggle: non-null only when the session carries an injected
+  /// guide provider (`GalTvSessionArgs.hasGuide`). The button is built from it,
+  /// and it shares one source of truth with the screen-level overlay.
+  final ValueListenable<bool>? galTvGuideVisible;
+  final VoidCallback? onToggleGalTvGuide;
+
+  /// Whether this is a GalTV (virtual-TV channel) session. Hides the controls
+  /// that don't belong on a channel — the play queue and picture-in-picture.
+  final bool isGalTv;
+
+  /// "Sync to live" action for a GalTV session; null otherwise. Jumps the
+  /// player back to the channel's live offset.
+  final VoidCallback? onResyncGalTv;
+
+  /// Steps the tuned GalTV channel by [delta] — the TV remote's CH+ / CH− keys.
+  /// Null outside a switchable GalTV session.
+  final void Function(int delta)? onGalTvChannelStep;
+
+  /// The tuned GalTV channel's logo, shown beside the player title. Null outside
+  /// GalTV, and for a channel with no icon.
+  final String? channelLogoUrl;
+
+  /// Headers the logo request needs — the gate authenticates images too.
+  final Map<String, String>? logoHeaders;
+
   /// Optional shader service for MPV shader control
   final ShaderService? shaderService;
 
@@ -731,6 +757,13 @@ class PlexVideoControls extends StatefulWidget {
     this.playNextFocusNode,
     this.playbackPromptOpen = false,
     required this.chromeController,
+    this.galTvGuideVisible,
+    this.onToggleGalTvGuide,
+    this.isGalTv = false,
+    this.onResyncGalTv,
+    this.onGalTvChannelStep,
+    this.channelLogoUrl,
+    this.logoHeaders,
     this.shaderService,
     this.onShaderChanged,
     this.thumbnailDataBuilder,
@@ -1339,6 +1372,10 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
                                                       onPrevious: _abandoningBurst(widget.onPrevious),
                                                       canControl: widget.canControl,
                                                       hasFirstFrame: widget.hasFirstFrame,
+                                                      isTranscoding: widget.isTranscoding,
+                                                      isGalTv: widget.isGalTv,
+                                                      channelLogoUrl: widget.channelLogoUrl,
+                                                      logoHeaders: widget.logoHeaders,
                                                       thumbnailDataBuilder: widget.thumbnailDataBuilder,
                                                       isLive: widget.isLive,
                                                       liveChannelName: widget.liveChannelName,

@@ -337,6 +337,18 @@ extension _VideoPlayerBuildMethods on VideoPlayerScreenState {
                         onToggleAmbientLighting: _ambientLightingService?.isSupported == true
                             ? _visualEffects.toggleAmbientLighting
                             : null,
+                        // The TV Guide button exists only for a GalTV session with
+                        // an injected provider; the notifier is the layer's own
+                        // source of truth, shared with the overlay below.
+                        galTvGuideVisible: widget.galTv?.hasGuide == true ? widget.galTv!.guideVisible : null,
+                        onToggleGalTvGuide: widget.galTv?.hasGuide == true ? _toggleGalTvGuide : null,
+                        isGalTv: widget.galTv != null,
+                        channelLogoUrl: _galTvChannelLogoUrl,
+                        logoHeaders: _galTvLogoHeaders,
+                        onResyncGalTv: widget.galTv?.canSwitchChannel == true ? _resyncGalTv : null,
+                        onGalTvChannelStep: widget.galTv?.canSwitchChannel == true
+                            ? (delta) => unawaited(_surfGalTvChannel(delta))
+                            : null,
                         toastController: _toastController,
                       ),
                     );
@@ -364,6 +376,37 @@ extension _VideoPlayerBuildMethods on VideoPlayerScreenState {
                 onPause: _onStillWatchingPause,
                 onContinue: _onStillWatchingContinue,
               ),
+              // GalTV guide layer. The player owns the route and the video keeps
+              // playing underneath; the layer's own ValueListenableBuilder
+              // mounts it only while `guideVisible` is true, and it takes chrome
+              // focus for the duration. Never present for a non-GalTV or
+              // guide-less session.
+              if (widget.galTv?.hasGuide == true)
+                Positioned.fill(
+                  child: ValueListenableBuilder<bool>(
+                    valueListenable: widget.galTv!.guideVisible,
+                    builder: (context, guideVisible, _) => guideVisible
+                        ? GalTvGuideOverlay(
+                            rows: _galTvGuideRows,
+                            isLoading: _galTvGuideLoading,
+                            error: _galTvGuideError,
+                            currentChannelId: _galTvChannelId,
+                            channelLabel: _galTvChannelName.isEmpty
+                                ? null
+                                : 'CH $_galTvChannelNumber · $_galTvChannelName',
+                            channelLogoUrl: _galTvChannelLogoUrl,
+                            logoHeaders: _galTvLogoHeaders,
+                            client: _galTvArtworkClient,
+                            isSwitching: _galTvSwitching,
+                            onSelectChannel: widget.galTv?.canSwitchChannel == true
+                                ? (channelId) => unawaited(_tuneGalTvChannel(channelId))
+                                : null,
+                            onClose: _closeGalTvGuide,
+                            onRetry: _retryGalTvGuide,
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                ),
               // Buffering indicator (also shows during initial load, but not when exiting)
               // Hidden in PiP mode
               VideoPlayerBufferingOverlay(

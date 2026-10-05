@@ -557,6 +557,15 @@ class SettingsService extends BaseSharedPreferencesService {
   static const crashReporting = BoolPref('crash_reporting', defaultValue: true);
   static const enableHardwareDecoding = BoolPref('enable_hardware_decoding', defaultValue: true);
   static const enableHDR = BoolPref('enable_hdr', defaultValue: true);
+  /// GalTV tab visibility. Switched on automatically by a successful Tunarr
+  /// sign-in and toggleable from the Tunarr service screen; the tab still also
+  /// requires a live Tunarr session, so signing out hides it regardless.
+  static const enableGaltv = BoolPref('enable_galtv');
+  /// Last GalTV channel the user watched, so opening the tab re-tunes where they
+  /// left off. Empty means "never tuned" — the screen then falls back to the
+  /// lowest-numbered channel. Device-local: reset by "Reset All Settings", never
+  /// carried in a settings export.
+  static const galtvLastChannelId = StringPref('galtv_last_channel_id');
   // Linux native video plane only. Defaults to the compositor: photographed on a
   // 400-nit HDR output against a PQ chart, the compositor keeps 400 -> 1000 nits
   // monotonic and separated while the player leg flattens it. The player path
@@ -1365,6 +1374,7 @@ class SettingsService extends BaseSharedPreferencesService {
     enableDebugLogging,
     enableHardwareDecoding,
     enableHDR,
+    enableGaltv,
     hdrToneMapping,
     viewMode,
     seekTimeSmall,
@@ -1503,6 +1513,7 @@ class SettingsService extends BaseSharedPreferencesService {
   /// should travel between installations.
   static final List<Pref<Object?>> _resetOnlyPrefs = [
     customDownloadPathType,
+    galtvLastChannelId,
     mediaVersionPreferences,
     localLastPlayedAt,
     customDownloadPath,

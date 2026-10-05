@@ -70,7 +70,28 @@ enum ShortcutAction {
   ),
   shaderToggle('shader_toggle', HotKey(key: PhysicalKeyboardKey.keyG), requiresShaderSupport: true),
   skipMarker('skip_marker', HotKey(key: PhysicalKeyboardKey.enter), requiresPlayback: true),
-  screenshot('screenshot', HotKey(key: PhysicalKeyboardKey.keyS, modifiers: [HotKeyModifier.control]));
+  screenshot('screenshot', HotKey(key: PhysicalKeyboardKey.keyS, modifiers: [HotKeyModifier.control])),
+
+  /// `I` for Info — the closest free mnemonic for the channel's info surface.
+  /// `G` would be the obvious guide key but it is [shaderToggle], and `T` is a
+  /// plausible user rebinding target that a new default should not claim.
+  galTvGuide('galtv_guide', HotKey(key: PhysicalKeyboardKey.keyI), requiresGalTvGuide: true),
+
+  /// The TV remote's own CH+ / CH− keys. Sitting on the physical channel keys is
+  /// the way a viewer expects to change channel, and they are never claimed by a
+  /// local key. Meaningful only in a GalTV session that can switch channels —
+  /// note they are *not* repeatable: one press is one step, and holding the key
+  /// must not stack in-place reloads.
+  galTvChannelUp(
+    'galtv_channel_up',
+    HotKey(key: PhysicalKeyboardKey.channelUp),
+    requiresGalTvChannel: true,
+  ),
+  galTvChannelDown(
+    'galtv_channel_down',
+    HotKey(key: PhysicalKeyboardKey.channelDown),
+    requiresGalTvChannel: true,
+  );
 
   const ShortcutAction(
     this.id,
@@ -79,6 +100,8 @@ enum ShortcutAction {
     this.requiresPlayback = false,
     this.requiresMediaNavigation = false,
     this.requiresShaderSupport = false,
+    this.requiresGalTvGuide = false,
+    this.requiresGalTvChannel = false,
   });
 
   /// Stable key this action is stored under in preferences.
@@ -98,6 +121,14 @@ enum ShortcutAction {
 
   /// Whether the action is only meaningful where shaders are available.
   final bool requiresShaderSupport;
+
+  /// Whether the action only means something in a GalTV session that has a guide
+  /// layer to toggle.
+  final bool requiresGalTvGuide;
+
+  /// Whether the action only means something in a GalTV session that can switch
+  /// channels (a session with a channel resolver).
+  final bool requiresGalTvChannel;
 
   static final Map<String, ShortcutAction> _byId = {for (final action in values) action.id: action};
 
@@ -136,5 +167,8 @@ enum ShortcutAction {
     ShortcutAction.shaderToggle => t.hotkeys.actions.shaderToggle,
     ShortcutAction.skipMarker => t.hotkeys.actions.skipMarker,
     ShortcutAction.screenshot => t.hotkeys.actions.screenshot,
+    ShortcutAction.galTvGuide => t.hotkeys.actions.galTvGuide,
+    ShortcutAction.galTvChannelUp => t.hotkeys.actions.galTvChannelUp,
+    ShortcutAction.galTvChannelDown => t.hotkeys.actions.galTvChannelDown,
   };
 }

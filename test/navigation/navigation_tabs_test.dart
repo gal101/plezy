@@ -76,5 +76,18 @@ void main() {
       final offline = NavigationTab.getVisibleTabs(isOffline: true, hasExplore: true);
       expect(offline.map((tab) => tab.id), isNot(contains(NavigationTabId.explore)));
     });
+
+    test('hides GalTV until a Tunarr session exists', () {
+      final without = NavigationTab.getVisibleTabs(isOffline: false);
+      expect(without.map((tab) => tab.id), isNot(contains(NavigationTabId.galtv)));
+
+      final with_ = NavigationTab.getVisibleTabs(isOffline: false, hasGalTv: true);
+      expect(with_.map((tab) => tab.id), contains(NavigationTabId.galtv));
+    });
+
+    test('GalTV is online-only', () {
+      final offline = NavigationTab.getVisibleTabs(isOffline: true, hasGalTv: true);
+      expect(offline.map((tab) => tab.id), isNot(contains(NavigationTabId.galtv)));
+    });
   });
 }

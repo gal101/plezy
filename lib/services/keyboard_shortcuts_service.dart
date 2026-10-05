@@ -259,7 +259,19 @@ class KeyboardShortcutsService extends ChangeNotifier {
     VoidCallback? onPreviousChapter, {
     required bool canControlPlayback,
     required bool canNavigateMediaItems,
+
+    /// Whether this surface has a GalTV guide to toggle. Defaults to false: only
+    /// the video-player surface can have one, every other caller cannot.
+    bool canToggleGalTvGuide = false,
+
+    /// Whether this surface is a GalTV session that can switch channels. Gates
+    /// the remote's CH+/CH− keys, which otherwise fall through to nothing.
+    bool canSwitchGalTvChannel = false,
     VoidCallback? onPlayPause,
+    VoidCallback? onToggleGalTvGuide,
+
+    /// Steps the tuned channel by [delta] (the remote's CH+/CH− keys).
+    void Function(int delta)? onGalTvChannelStep,
     VoidCallback? onToggleShader,
     VoidCallback? onSkipMarker,
     VoidCallback? onNextEpisode,
@@ -327,7 +339,9 @@ class KeyboardShortcutsService extends ChangeNotifier {
 
       if (action == null ||
           (action.requiresPlayback && !canControlPlayback) ||
-          (action.requiresMediaNavigation && !canNavigateMediaItems)) {
+          (action.requiresMediaNavigation && !canNavigateMediaItems) ||
+          (action.requiresGalTvGuide && !canToggleGalTvGuide) ||
+          (action.requiresGalTvChannel && !canSwitchGalTvChannel)) {
         return KeyEventResult.handled;
       }
 
@@ -398,6 +412,12 @@ class KeyboardShortcutsService extends ChangeNotifier {
           onSkipMarker?.call();
         case ShortcutAction.screenshot:
           unawaited(player.command(['screenshot', 'subtitles']).then((_) => onScreenshot?.call()));
+        case ShortcutAction.galTvGuide:
+          onToggleGalTvGuide?.call();
+        case ShortcutAction.galTvChannelUp:
+          onGalTvChannelStep?.call(1);
+        case ShortcutAction.galTvChannelDown:
+          onGalTvChannelStep?.call(-1);
         case ShortcutAction.zoomIn:
           onZoomIn?.call();
         case ShortcutAction.zoomOut:

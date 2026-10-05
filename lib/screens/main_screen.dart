@@ -46,6 +46,7 @@ import '../providers/hidden_libraries_provider.dart';
 import '../providers/libraries_provider.dart';
 import '../providers/playback_state_provider.dart';
 import '../providers/seerr_account_provider.dart';
+import '../providers/tunarr_account_provider.dart';
 import '../widgets/settings_builder.dart';
 import '../widgets/tv_virtual_keyboard.dart';
 import '../services/api_cache.dart';
@@ -70,6 +71,7 @@ import 'explore_screen.dart';
 import 'libraries/library_quick_picker_sheet.dart';
 import 'libraries/libraries_screen.dart';
 import 'livetv/live_tv_screen.dart';
+import 'galtv/galtv_screen.dart';
 import 'search_screen.dart';
 import 'downloads/downloads_screen.dart';
 import 'settings/settings_screen.dart';
@@ -412,9 +414,12 @@ class _MainScreenState extends State<MainScreen>
   MultiServerProvider? _multiServerProvider;
   CatalogSourcesProvider? _catalogSourcesProvider;
   ValueListenable<bool>? _showExploreTabListenable;
+  ValueListenable<bool>? _enableGaltvListenable;
+  TunarrAccountProvider? _tunarrAccountProvider;
   RouteObserver<PageRoute<dynamic>>? _profileRouteObserver;
   bool _lastHasLiveTv = false;
   bool _lastHasExplore = false;
+  bool _lastHasGalTv = false;
 
   /// Whether a reconnection attempt is in progress
   bool _isReconnecting = false;
@@ -544,6 +549,15 @@ class _MainScreenState extends State<MainScreen>
     // mid-session; the catalog-sources listener covers source changes.
     _showExploreTabListenable = SettingsService.instanceOrNull?.listenable(SettingsService.showExploreTab);
     _showExploreTabListenable?.addListener(_handleCatalogSourcesChanged);
+    // GalTV needs both a live Tunarr session and the user's toggle. The toggle is
+    // watched here; the session arrives through _handleTunarrChanged below.
+    try {
+      _lastHasGalTv = _computeHasGalTv(context.read<TunarrAccountProvider?>());
+    } catch (_) {
+      _lastHasGalTv = false;
+    }
+    _enableGaltvListenable = SettingsService.instanceOrNull?.listenable(SettingsService.enableGaltv);
+    _enableGaltvListenable?.addListener(_handleTunarrChanged);
     _currentTab = _defaultTabForMode(_isOffline);
     _lastOnlineTabId = _isOffline ? null : NavigationTabId.discover;
     _autoSwitchedToDownloads = _isOffline && _currentTab == NavigationTabId.downloads;
@@ -1009,6 +1023,14 @@ class _MainScreenState extends State<MainScreen>
       _catalogSourcesProvider!.addListener(_handleCatalogSourcesChanged);
     }
 
+    // Listen for the Tunarr session appearing or clearing mid-session (GalTV tab).
+    final tunarr = context.read<TunarrAccountProvider?>();
+    if (tunarr != _tunarrAccountProvider) {
+      _tunarrAccountProvider?.removeListener(_handleTunarrChanged);
+      _tunarrAccountProvider = tunarr;
+      _tunarrAccountProvider?.addListener(_handleTunarrChanged);
+    }
+
     // Wire up Companion Remote command routing (host devices only, once)
     if (!_companionRemoteSetup && PlatformDetector.shouldActAsRemoteHost(context)) {
       _companionRemoteSetup = true;
@@ -1098,6 +1120,8 @@ class _MainScreenState extends State<MainScreen>
     _multiServerProvider?.removeListener(_handleLiveTvChanged);
     _catalogSourcesProvider?.removeListener(_handleCatalogSourcesChanged);
     _showExploreTabListenable?.removeListener(_handleCatalogSourcesChanged);
+    _enableGaltvListenable?.removeListener(_handleTunarrChanged);
+    _tunarrAccountProvider?.removeListener(_handleTunarrChanged);
     if (_bindingSettleListener != null) {
       _activeProfileForListener?.removeListener(_bindingSettleListener!);
     }
@@ -1261,6 +1285,7 @@ class _MainScreenState extends State<MainScreen>
       ),
       NavigationTabId.liveTv => LiveTvScreen(key: _screenKeys[tab]),
       NavigationTabId.search => SearchScreen(key: _screenKeys[tab]),
+      NavigationTabId.galtv => GalTvScreen(key: _screenKeys[tab], onExitToHome: _leaveGalTvForHome),
       NavigationTabId.downloads => DownloadsScreen(key: _screenKeys[tab]),
       NavigationTabId.settings => SettingsScreen(key: _screenKeys[tab]),
     };
@@ -1278,6 +1303,7 @@ class _MainScreenState extends State<MainScreen>
     isOffline: isOffline,
     hasLiveTv: _hasLiveTv,
     hasExplore: _lastHasExplore,
+    hasGalTv: _lastHasGalTv,
     preferredStartup: SettingsService.instanceOrNull?.read(SettingsService.startupSection),
   );
 
@@ -1359,6 +1385,20 @@ class _MainScreenState extends State<MainScreen>
     final hasExplore = (_catalogSourcesProvider?.hasAnySource ?? false) && _showExploreTabSetting;
     if (hasExplore == _lastHasExplore) return;
     _lastHasExplore = hasExplore;
+
+    _handleTabAvailabilityChanged();
+  }
+
+  /// Whether GalTV is visible: a live Tunarr session *and* the user's toggle.
+  /// Both are required, so signing out hides the tab regardless of the
+  /// persisted preference, and the tab returns on reconnect without re-toggling.
+  bool _computeHasGalTv(TunarrAccountProvider? provider) =>
+      (provider?.isConnected ?? false) && (SettingsService.instanceOrNull?.read(SettingsService.enableGaltv) ?? false);
+
+  void _handleTunarrChanged() {
+    final hasGalTv = _computeHasGalTv(_tunarrAccountProvider);
+    if (hasGalTv == _lastHasGalTv) return;
+    _lastHasGalTv = hasGalTv;
 
     _handleTabAvailabilityChanged();
   }
@@ -1572,6 +1612,22 @@ class _MainScreenState extends State<MainScreen>
     _lastBackPressAt = now;
     showMainSnackBar(t.common.pressBackAgainToExit, duration: _backExitWindow);
     return KeyEventResult.handled;
+  }
+
+  /// Leaving the GalTV player (Back, not a programme end) lands on Home rather
+  /// than on the tab's idle card, which is a lone Watch button — nothing the
+  /// viewer needs after deciding to stop watching. Mirrors the companion
+  /// remote's Home command, and clears [_lastBackPressAt] so the exit press can't
+  /// arm the press-back-again-to-quit on the way through.
+  void _leaveGalTvForHome() {
+    if (!mounted) return;
+    final tabs = _getVisibleTabs(_isOffline);
+    if (tabs.isEmpty) return;
+    _lastBackPressAt = null;
+    _selectTab(tabs.first.id);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _sideNavKey.currentState?.focusHomeItem();
+    });
   }
 
   KeyEventResult _handleMainBackKeyAction(KeyEvent event) {
@@ -1947,8 +2003,17 @@ class _MainScreenState extends State<MainScreen>
   /// Updated by _handleLiveTvChanged when the provider notifies.
   bool get _hasLiveTv => _lastHasLiveTv;
 
+  /// Whether the GalTV tab is currently visible. Uses the synchronized value so
+  /// the screens list and the nav bar always agree (see [_handleTunarrChanged]).
+  bool get _hasGalTv => _lastHasGalTv;
+
   List<NavigationTab> _getVisibleTabs(bool isOffline) {
-    return NavigationTab.getVisibleTabs(isOffline: isOffline, hasLiveTv: _hasLiveTv, hasExplore: _lastHasExplore);
+    return NavigationTab.getVisibleTabs(
+      isOffline: isOffline,
+      hasLiveTv: _hasLiveTv,
+      hasExplore: _lastHasExplore,
+      hasGalTv: _hasGalTv,
+    );
   }
 
   List<NavigationTab> _getBottomNavigationTabs(BuildContext context) {

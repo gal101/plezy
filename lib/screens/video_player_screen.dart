@@ -27,6 +27,9 @@ import '../media/episode_collection.dart';
 import '../media/live_tv_support.dart';
 import '../models/livetv_capture_buffer.dart';
 import '../models/livetv_channel.dart';
+import '../models/galtv/galtv_guide.dart';
+import '../models/galtv/galtv_session_args.dart';
+import '../services/galtv/galtv_tuner.dart';
 import '../services/live_seek_accumulator.dart';
 import '../services/plex_client.dart';
 import '../services/jellyfin_client.dart';
@@ -118,6 +121,7 @@ import 'video_player/tv_background_suspend_state.dart';
 import 'video_player/visual_effects_controller.dart';
 import 'video_player/widgets/player_prompt_overlays.dart';
 import '../widgets/overlay_sheet.dart';
+import '../widgets/galtv/galtv_guide_overlay.dart';
 import '../widgets/video_controls/player_chrome_controller.dart';
 import '../widgets/video_controls/video_controls.dart';
 import '../widgets/video_controls/widgets/player_toast_indicator.dart';
@@ -137,6 +141,7 @@ part 'video_player/parts/display_matching.dart';
 part 'video_player/parts/episode_navigation.dart';
 part 'video_player/parts/episode_queue.dart';
 part 'video_player/parts/errors.dart';
+part 'video_player/parts/galtv.dart';
 part 'video_player/parts/lifecycle.dart';
 part 'video_player/parts/live_tv.dart';
 part 'video_player/parts/pip.dart';
@@ -477,6 +482,12 @@ class VideoPlayerScreen extends StatefulWidget {
   /// state (see [LiveTvSessionArgs]).
   final LiveTvSessionArgs? live;
 
+  /// Present iff this screen plays a GalTV virtual-TV channel. Deliberately
+  /// separate from [live]: GalTV plays as ordinary VOD (Direct Play), and this
+  /// only marks the session as watch-report-suppressed and guide-capable (see
+  /// [GalTvSessionArgs] and `plezy-tunarr/client-integration.md` §4.3).
+  final GalTvSessionArgs? galTv;
+
   bool get isLive => live != null;
 
   const VideoPlayerScreen({
@@ -492,6 +503,7 @@ class VideoPlayerScreen extends StatefulWidget {
     this.selectedQualityPreset,
     this.selectedAudioStreamId,
     this.live,
+    this.galTv,
     this.watchTogetherLease,
     this.initialPosition,
     this.strictMediaSelection = false,
@@ -800,6 +812,50 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
   /// retry ladder) — inert for VOD screens. See [LiveTvSessionState].
   late final LiveTvSessionState _live = LiveTvSessionState(widget.live);
 
+  /// True when this session must never write watch state. A live stream is
+  /// covered by its own timeline heartbeats, and a GalTV channel is a schedule,
+  /// not a viewed item: without this every channel hop writes Plex history,
+  /// local history, tracker scrobbles and the offline queue. This is the single
+  /// derivation read wherever the pre-existing `widget.isLive` gate sat.
+  bool get _suppressWatchReporting => widget.isLive || widget.galTv != null;
+
+  /// GalTV guide layer state. Rows are fetched once when the layer is first
+  /// shown and cached for the layer's lifetime; Retry drops the cache and
+  /// refetches. See [_VideoPlayerGalTvMethods].
+  List<GalTvGuideRow>? _galTvGuideRows;
+  bool _galTvGuideLoading = false;
+  String? _galTvGuideError;
+
+  /// The channel/programme on screen. Seeded from the launched session and moved
+  /// by every channel switch, so the guide's "now" marker, its header label, and
+  /// the transport's surf bounds all describe the picture, not the launch plan.
+  /// See [_VideoPlayerGalTvMethods].
+  String? _galTvChannelId;
+  String _galTvChannelNumber = '';
+  String _galTvChannelName = '';
+
+  /// Logo of the tuned channel, passed to the guide header. Null when the
+  /// channel has no icon.
+  String? _galTvChannelLogoUrl;
+
+  /// Headers for channel-logo requests: the gate authenticates images too, so
+  /// the logo fetch carries the same `X-Plex-Token` the API calls do.
+  Map<String, String>? _galTvLogoHeaders;
+
+  /// The Plex client for the item on screen — the guide paints programme
+  /// backdrops through the app's own Plex image pipeline, not through Tunarr.
+  MediaServerClient? get _galTvArtworkClient =>
+      widget.galTv == null ? null : context.getPlexClientWithFallback(null);
+
+  /// One in-flight switch at a time: the resolve + open sequence takes network
+  /// round trips, and mashing a channel button must not stack reloads.
+  bool _galTvSwitching = false;
+
+  /// Bumped per guide fetch so a switch that lands mid-fetch supersedes the
+  /// in-flight one instead of being dropped — stale rows would keep marking the
+  /// channel we just left as "now".
+  int _galTvGuideFetchGeneration = 0;
+
   /// Coalesces rapid relative live-TV skips into a single transcode re-open so
   /// mashing skip-forward can't compound into an overshoot to live (#1253).
   /// Lazily built; its closures read the current live state on each call.
@@ -1058,8 +1114,10 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
     _eofRecovery.clearPark();
     // Every successful open passes through here (never live TV), making it
     // the chokepoint for the local last-played history. Offline plays are
-    // excluded — like version prefs, the history describes online intent.
-    if (!session.isOffline) {
+    // excluded — like version prefs, the history describes online intent —
+    // and GalTV is excluded because a channel is a schedule, not a choice
+    // (`client-integration.md` §4.3).
+    if (!session.isOffline && !_suppressWatchReporting) {
       unawaited(LocalPlaybackHistory.recordPlayback(session.metadata));
     }
   }
@@ -1445,6 +1503,24 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     _companionRemote.bind();
     _setupAppleTvRemotePlaybackActions();
+
+    // The guide toggle button drives `guideVisible`; the screen listens only so
+    // the first show starts the row fetch (the cache then serves re-opens until
+    // Retry drops it). The layer's own mount and chrome hold hang off the same
+    // notifier in the build tree. GalTV sessions only — `galTv` is null for
+    // every other route.
+    widget.galTv?.guideVisible.addListener(_handleGalTvGuideVisibilityChanged);
+
+    // Seed the live channel identity from the launched session before any guide
+    // fetch can run, so the first grid marks the right "now".
+    final galTv = widget.galTv;
+    if (galTv != null) {
+      _galTvChannelId = galTv.channelId;
+      _galTvChannelNumber = galTv.channelNumber;
+      _galTvChannelName = galTv.channelName;
+      _galTvChannelLogoUrl = galTv.channelLogoUrl;
+      _galTvLogoHeaders = galTv.logoHeaders;
+    }
 
     _sleepTimerSubscription = SleepTimerService().onPrompt.listen((_) {
       if (mounted) _showStillWatchingDialog();
@@ -2269,6 +2345,9 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
   Future<void> _handleBackButton({bool navigateHome = false}) async {
     final acceptedExit = _routeExitOperation;
     if (acceptedExit != null) return acceptedExit;
+    // The guide is the topmost layer while it is up, so Back dismisses the layer
+    // instead of tearing down the player behind it. Home still exits.
+    if (!navigateHome && _closeGalTvGuideIfVisible()) return;
     if (!navigateHome && (_episode.showPlayNextDialog || _showStillWatchingPrompt)) {
       _dismissPlaybackPromptForBack();
       return;
@@ -2459,6 +2538,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
     _initializationErrorFocusNode.dispose();
 
     _screenFocusNode.removeListener(_onScreenFocusChanged);
+    widget.galTv?.guideVisible.removeListener(_handleGalTvGuideVisibilityChanged);
     HardwareKeyboard.instance.removeHandler(_primeInitializationNavigationFocus);
     _screenFocusNode.dispose();
 

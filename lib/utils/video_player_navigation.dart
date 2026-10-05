@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import '../media/media_item.dart';
 import '../media/media_version.dart';
 import '../media/media_version_preference.dart';
+import '../models/galtv/galtv_session_args.dart';
 import '../mpv/mpv.dart';
 import '../models/transcode_quality_preset.dart';
 import '../providers/download_provider.dart';
@@ -281,6 +282,9 @@ Future<ResolvedMediaVersionPreference?> resolveSavedMediaVersionFor(MediaItem me
 /// - [resolveWatchState]: Resolve [metadata] through [WatchStateStore] so the
 ///   resume offset/watched flag are session-fresh even when the caller holds a
 ///   stale list snapshot. Pass false for explicit intents like play-from-start.
+/// - [galTv]: Marks a GalTV virtual-TV session. The player plays it as ordinary
+///   VOD (never `LiveTvSessionArgs`), suppresses watch reporting, and draws the
+///   in-player guide layer.
 ///
 /// Returns a Future that completes with a boolean indicating whether the content
 /// was watched, or null if navigation was cancelled.
@@ -302,6 +306,7 @@ Future<bool?> navigateToVideoPlayer(
   bool strictMediaSelection = false,
   bool explicitStartPolicy = false,
   PlaybackLaunchObserver? launchObserver,
+  GalTvSessionArgs? galTv,
 }) async {
   if (!isOffline && watchTogetherLease == null) {
     final watchTogether = context.read<WatchTogetherProvider?>();
@@ -480,6 +485,7 @@ Future<bool?> navigateToVideoPlayer(
         strictMediaSelection: strictMediaSelection,
         isLaunchCurrent: isLaunchCurrent,
         launchObserver: launchObserver,
+        galTv: galTv,
       ),
     );
 

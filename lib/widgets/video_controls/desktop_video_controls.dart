@@ -23,9 +23,11 @@ import 'models/track_controls_state.dart';
 import 'player_chrome_controller.dart';
 import 'widgets/content_strip.dart';
 import 'widgets/content_strip_panel.dart';
+import 'widgets/channel_logo.dart';
 import 'widgets/live_timeline_bar.dart';
 import 'widgets/first_frame_guard.dart';
 import 'widgets/play_pause_stream_builder.dart';
+import 'widgets/play_method_tag.dart';
 import 'widgets/video_controls_header.dart';
 import 'widgets/video_timeline_bar.dart';
 import 'widgets/volume_control.dart';
@@ -111,6 +113,22 @@ class DesktopVideoControls extends StatefulWidget {
   /// Called when a seek operation completes successfully.
   final Function(Duration position)? onSeekCompleted;
 
+  /// Whether the server is transcoding this item — drives the Direct Play /
+  /// Transcoding status line under the timeline.
+  final bool isTranscoding;
+
+  /// Whether this is a GalTV session. The previous/next transport buttons then
+  /// step the channel (as the remote's CH+/CH− do) rather than the episode, so
+  /// they wear channel glyphs and channel tooltips.
+  final bool isGalTv;
+
+  /// The tuned GalTV channel's logo, shown beside the title. Null outside GalTV
+  /// and for a channel with no icon.
+  final String? channelLogoUrl;
+
+  /// Headers the logo request needs — the gate authenticates images too.
+  final Map<String, String>? logoHeaders;
+
   const DesktopVideoControls({
     super.key,
     required this.player,
@@ -157,6 +175,10 @@ class DesktopVideoControls extends StatefulWidget {
     this.chromeController,
     this.onSeekRequested,
     this.onSeekCompleted,
+    this.isTranscoding = false,
+    this.isGalTv = false,
+    this.channelLogoUrl,
+    this.logoHeaders,
   });
 
   @override
@@ -679,6 +701,9 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
             child: VideoControlsHeader(
               metadata: widget.metadata,
               style: Platform.isMacOS ? VideoHeaderStyle.singleLine : VideoHeaderStyle.multiLine,
+              leading: widget.channelLogoUrl == null
+                  ? null
+                  : ChannelLogo(url: widget.channelLogoUrl!, size: 28, headers: widget.logoHeaders),
               onBack: widget.onBack,
               onCancelAutoHide: widget.onCancelAutoHide,
               onStartAutoHide: widget.onStartAutoHide,
@@ -752,10 +777,11 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
                     child: _buildFocusableButton(
                       focusNode: _prevItemFocusNode,
                       index: 0,
-                      icon: Symbols.skip_previous_rounded,
+                      icon: widget.isGalTv ? Symbols.keyboard_double_arrow_left_rounded : Symbols.skip_previous_rounded,
                       color: widget.onPrevious != null && _canControl ? Colors.white : Colors.white54,
                       onPressed: _canControl ? widget.onPrevious : null,
-                      semanticLabel: t.videoControls.previousButton,
+                      semanticLabel: widget.isGalTv ? t.galtv.previousChannel : t.videoControls.previousButton,
+                      tooltip: widget.isGalTv ? t.galtv.previousChannel : null,
                     ),
                   ),
                   // Previous chapter
@@ -858,64 +884,31 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
                     child: _buildFocusableButton(
                       focusNode: _nextItemFocusNode,
                       index: 6,
-                      icon: Symbols.skip_next_rounded,
+                      icon: widget.isGalTv ? Symbols.keyboard_double_arrow_right_rounded : Symbols.skip_next_rounded,
                       color: widget.onNext != null && _canControl ? Colors.white : Colors.white54,
                       onPressed: _canControl ? widget.onNext : null,
-                      semanticLabel: t.videoControls.nextButton,
+                      semanticLabel: widget.isGalTv ? t.galtv.nextChannel : t.videoControls.nextButton,
+                      tooltip: widget.isGalTv ? t.galtv.nextChannel : null,
                     ),
                   ),
                 ],
-                // Finish time (hidden for live TV, faded when too narrow)
-                if (_isLive)
-                  const Spacer()
-                else
-                  Expanded(
-                    child: StreamBuilder<Duration>(
-                      stream: widget.player.streams.duration,
-                      initialData: widget.player.state.duration,
-                      builder: (context, durationSnapshot) {
-                        final duration = durationSnapshot.data ?? Duration.zero;
-                        return StreamBuilder<double>(
-                          stream: widget.player.streams.rate,
-                          initialData: widget.player.state.rate,
-                          builder: (context, rateSnapshot) {
-                            final rate = rateSnapshot.data ?? 1.0;
-                            final initialRemaining = duration - widget.player.state.position;
-                            return StreamBuilder<Duration>(
-                              stream: widget.player.streams.position.map((position) => duration - position).distinct((
-                                previous,
-                                next,
-                              ) {
-                                final previousHasRemaining = previous.inSeconds > 0;
-                                final nextHasRemaining = next.inSeconds > 0;
-                                return previousHasRemaining == nextHasRemaining &&
-                                    (!previousHasRemaining || previous.inMinutes == next.inMinutes);
-                              }),
-                              initialData: initialRemaining,
-                              builder: (context, remainingSnapshot) {
-                                final remaining = remainingSnapshot.data ?? Duration.zero;
-                                if (remaining.inSeconds <= 0) return const SizedBox.shrink();
-
-                                final text = t.videoControls.endsAt(
-                                  time: formatFinishTime(
-                                    remaining,
-                                    rate: rate,
-                                    is24Hour: MediaQuery.alwaysUse24HourFormatOf(context),
-                                  ),
-                                );
-                                const style = TextStyle(color: Colors.white70, fontSize: 13);
-
-                                return Padding(
-                                  padding: const EdgeInsets.only(left: 8),
-                                  child: Text(text, style: style, maxLines: 1, softWrap: false, overflow: .fade),
-                                );
-                              },
-                            );
-                          },
-                        );
-                      },
-                    ),
+                // Mid-row: the finish time sits on the left and the delivery tag
+                // on the right, so the tag lands immediately to the left of the
+                // button group while the group itself stays in the row's right
+                // corner. A single Expanded absorbs all the slack — putting the
+                // tag directly in the row instead split that slack with the
+                // finish time and pushed the group into the middle. Both cells
+                // are Flexible so they fade rather than overflow a narrow player.
+                Expanded(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Flexible(child: _isLive ? const SizedBox.shrink() : _buildFinishTime(context)),
+                      Flexible(child: PlayMethodTag(isTranscoding: widget.isTranscoding)),
+                    ],
                   ),
+                ),
+                const SizedBox(width: 16),
                 // Volume control (hidden on TV — hardware handles volume)
                 if (!PlatformDetector.isTV()) ...[
                   VolumeControl(
@@ -954,6 +947,56 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
           ),
         ],
       ),
+    );
+  }
+
+  /// The "Ends at HH:MM" label for the non-live transport row. Extracted so the
+  /// middle row can hold it and the delivery tag side by side.
+  Widget _buildFinishTime(BuildContext context) {
+    return StreamBuilder<Duration>(
+      stream: widget.player.streams.duration,
+      initialData: widget.player.state.duration,
+      builder: (context, durationSnapshot) {
+        final duration = durationSnapshot.data ?? Duration.zero;
+        return StreamBuilder<double>(
+          stream: widget.player.streams.rate,
+          initialData: widget.player.state.rate,
+          builder: (context, rateSnapshot) {
+            final rate = rateSnapshot.data ?? 1.0;
+            final initialRemaining = duration - widget.player.state.position;
+            return StreamBuilder<Duration>(
+              stream: widget.player.streams.position.map((position) => duration - position).distinct((
+                previous,
+                next,
+              ) {
+                final previousHasRemaining = previous.inSeconds > 0;
+                final nextHasRemaining = next.inSeconds > 0;
+                return previousHasRemaining == nextHasRemaining &&
+                    (!previousHasRemaining || previous.inMinutes == next.inMinutes);
+              }),
+              initialData: initialRemaining,
+              builder: (context, remainingSnapshot) {
+                final remaining = remainingSnapshot.data ?? Duration.zero;
+                if (remaining.inSeconds <= 0) return const SizedBox.shrink();
+
+                final text = t.videoControls.endsAt(
+                  time: formatFinishTime(
+                    remaining,
+                    rate: rate,
+                    is24Hour: MediaQuery.alwaysUse24HourFormatOf(context),
+                  ),
+                );
+                const style = TextStyle(color: Colors.white70, fontSize: 13);
+
+                return Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Text(text, style: style, maxLines: 1, softWrap: false, overflow: .fade),
+                );
+              },
+            );
+          },
+        );
+      },
     );
   }
 

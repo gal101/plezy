@@ -19,6 +19,7 @@ import 'package:plezy/providers/playback_state_provider.dart';
 import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/services/video_volume_controller.dart';
 import 'package:plezy/widgets/video_controls/widgets/player_toast_indicator.dart';
+import 'package:plezy/widgets/video_controls/widgets/play_method_tag.dart';
 import 'package:plezy/widgets/video_controls/desktop_video_controls.dart';
 import 'package:plezy/widgets/video_controls/mobile_video_controls.dart';
 import 'package:plezy/watch_together/providers/watch_together_provider.dart';
@@ -30,6 +31,8 @@ import 'package:plezy/widgets/video_controls/widgets/mobile_skip_zones.dart';
 import 'package:plezy/widgets/video_controls/widgets/skip_marker_button.dart';
 import 'package:plezy/widgets/video_controls/widgets/sync_offset_control.dart';
 import 'package:plezy/widgets/video_controls/widgets/timeline_slider.dart';
+import 'package:plezy/widgets/video_controls/widgets/track_chapter_controls.dart';
+import 'package:plezy/widgets/video_controls/widgets/volume_control.dart';
 import 'package:plezy/widgets/video_controls/video_control_button.dart';
 import 'package:plezy/widgets/app_bar_back_button.dart';
 import 'package:plezy/widgets/system_clock.dart';
@@ -1587,6 +1590,82 @@ void main() {
 
       final slider = tester.widget<Slider>(find.byType(Slider));
       expect(slider.value, const Duration(minutes: 4).inMilliseconds.toDouble());
+    });
+
+    testWidgets('the delivery tag sits in the transport button row, not the timeline', (tester) async {
+      LocaleSettings.setLocaleSync(AppLocale.en);
+      await initializeDateFormatting('en');
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      resetSharedPreferencesForTest();
+      SettingsService.resetForTesting();
+      final settings = await SettingsService.getInstance();
+      final player = FakeSyncPlayer();
+      addTearDown(player.dispose);
+      final volume = VideoVolumeController(player: player, settings: settings, initialVolume: 100);
+      addTearDown(volume.dispose);
+
+      final watchTogether = WatchTogetherProvider();
+      addTearDown(watchTogether.dispose);
+      await tester.pumpWidget(
+        ChangeNotifierProvider<WatchTogetherProvider>.value(
+          value: watchTogether,
+          child: MaterialApp(
+            theme: ThemeData(extensions: const [testMonoTokens]),
+            home: Scaffold(
+              body: SizedBox(
+                width: 1000,
+                height: 700,
+                child: DesktopVideoControls(
+                  useDpadNavigation: false,
+                  player: player,
+                  volumeController: volume,
+                  metadata: testMediaItem(id: 'desktop-play-method'),
+                  onPlayPause: () {},
+                  chapters: const [],
+                  chaptersLoaded: true,
+                  seekTimeSmall: 10,
+                  onSeekToPreviousChapter: () {},
+                  onSeekToNextChapter: () {},
+                  onSeek: (_) {},
+                  onSeekEnd: (_) {},
+                  getReplayIcon: (_) => Icons.replay,
+                  getForwardIcon: (_) => Icons.forward_10,
+                  trackControlsState: const TrackControlsState(canControl: true),
+                  isTranscoding: true,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final tag = find.byType(PlayMethodTag);
+      expect(tag, findsOneWidget);
+      expect(find.text('Transcoding'), findsOneWidget);
+
+      // Same band as the transport buttons: the regression was the tag living in
+      // the timeline row and pushing the seek bar up.
+      final tagRect = tester.getRect(tag);
+      final sliderRect = tester.getRect(find.byType(TimelineSlider));
+      expect(tagRect.top, greaterThan(sliderRect.bottom), reason: 'the tag must sit below the seek bar');
+      final transportCentre = tester.getCenter(find.byType(VideoControlButton).first);
+      expect(
+        (tagRect.center.dy - transportCentre.dy).abs(),
+        lessThan(1.0),
+        reason: 'the tag must share the transport button row',
+      );
+
+      // Immediately left of the button group, which stays in the row's right
+      // corner. Regression: the tag as a sibling Flexible split the row's slack
+      // with the finish time and dragged the group into the middle.
+      final volumeRect = tester.getRect(find.byType(VolumeControl));
+      final trackRect = tester.getRect(find.byType(TrackChapterControls));
+      expect(tagRect.right, lessThanOrEqualTo(volumeRect.left), reason: 'the tag must sit left of the button group');
+      final rowRight = tester.getRect(find.byType(DesktopVideoControls)).right - 24;
+      expect(trackRect.right, closeTo(rowRight, 0.5), reason: 'the button group must stay in the right corner');
     });
 
     Future<void> pumpScrubSlider(

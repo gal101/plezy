@@ -13,6 +13,9 @@
 ///   AniList, Simkl, Trakt and MDBList live here in plaintext.
 /// * Seerr sessions — `SeerrSessionStore` persists a raw `connect.sid` cookie
 ///   alongside a vault-protected password.
+/// * Tunarr sessions — `TunarrSessionStore` persists the gate URL, account
+///   identity and visible-library list. It carries no token, but it is still an
+///   auth slot that a repair must not silently drop.
 /// * [legacyPlexTokenPref] — the pre-connection-registry Plex token slot. It is
 ///   drained by the connection migration but can linger on old installs.
 ///
@@ -50,9 +53,20 @@ const List<String> trackerSessionBaseKeys = <String>[
 /// Unscoped base key used by `SeerrSessionStore`.
 const String seerrSessionBaseKey = 'seerr_session';
 
+/// Unscoped base key used by `TunarrSessionStore`. The session holds no token
+/// (the Plex token is read live from the profile connection), but it is still a
+/// profile-scoped auth/endpoint slot that must not be silently dropped or
+/// exported — registering it here routes it through the same repair and
+/// tolerant-read paths as the Seerr session.
+const String tunarrSessionBaseKey = 'tunarr_session';
+
 /// Every credential slot that is profile-scoped through `profileScopedPrefsKey`,
 /// so a stored key is either the bare base key or `user_{scope}_{baseKey}`.
-const List<String> profileScopedCredentialBaseKeys = <String>[...trackerSessionBaseKeys, seerrSessionBaseKey];
+const List<String> profileScopedCredentialBaseKeys = <String>[
+  ...trackerSessionBaseKeys,
+  seerrSessionBaseKey,
+  tunarrSessionBaseKey,
+];
 
 final RegExp _profileScopedCredentialPattern = RegExp(
   '^(?:user_.+_)?(?:${profileScopedCredentialBaseKeys.join('|')})\$',
@@ -70,6 +84,9 @@ String? profileScopedCredentialBaseKey(String key) {
 
 /// Whether [key] is a profile-scoped or global Seerr session slot.
 bool isSeerrSessionPrefKey(String key) => profileScopedCredentialBaseKey(key) == seerrSessionBaseKey;
+
+/// Whether [key] is a profile-scoped or global Tunarr session slot.
+bool isTunarrSessionPrefKey(String key) => profileScopedCredentialBaseKey(key) == tunarrSessionBaseKey;
 
 /// Whether [key] holds a credential and must never be dropped or exported
 /// without an explicit, informed user decision.

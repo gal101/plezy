@@ -29,6 +29,10 @@ class VideoControlsHeader extends StatelessWidget {
   /// Optional trailing widget (e.g., track/chapter controls)
   final Widget? trailing;
 
+  /// Optional widget between the back button and the title — the tuned GalTV
+  /// channel's logo.
+  final Widget? leading;
+
   /// Optional callback for back button. If null, defaults to Navigator.pop(true).
   final VoidCallback? onBack;
   final VoidCallback? onCancelAutoHide;
@@ -44,6 +48,7 @@ class VideoControlsHeader extends StatelessWidget {
     required this.metadata,
     this.style = VideoHeaderStyle.multiLine,
     this.trailing,
+    this.leading,
     this.onBack,
     this.onCancelAutoHide,
     this.onStartAutoHide,
@@ -57,6 +62,7 @@ class VideoControlsHeader extends StatelessWidget {
       children: [
         AppBarBackButton(style: BackButtonStyle.video, onPressed: onBack ?? () => Navigator.of(context).pop(true)),
         const SizedBox(width: 16),
+        if (leading != null) ...[leading!, const SizedBox(width: 12)],
         Expanded(
           child: style == VideoHeaderStyle.singleLine
               ? _buildSingleLineTitle(itemTitle)

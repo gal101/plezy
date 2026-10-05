@@ -729,6 +729,83 @@ void main() {
     expect(VideoFilterManager.videoZoomPropertyForScale(2.0), closeTo(1.0, 0.0001));
     expect(VideoFilterManager.videoZoomPropertyForScale(0.5), closeTo(-1.0, 0.0001));
   });
+
+  testWidgets('the TV guide shortcut fires only where a guide exists', (tester) async {
+    final service = await KeyboardShortcutsService.getInstance();
+    addTearDown(service.dispose);
+    final player = _FakePlayer();
+    var toggles = 0;
+
+    KeyEventResult pressGuideKey({required bool canToggle}) => service.handleVideoPlayerKeyEvent(
+      const KeyDownEvent(
+        physicalKey: PhysicalKeyboardKey.keyI,
+        logicalKey: LogicalKeyboardKey.keyI,
+        timeStamp: Duration.zero,
+      ),
+      player,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      canControlPlayback: true,
+      canNavigateMediaItems: true,
+      canToggleGalTvGuide: canToggle,
+      onToggleGalTvGuide: () => toggles++,
+    );
+
+    // The key is still consumed without a guide — a stale binding must never leak
+    // through to another handler — but nothing happens.
+    expect(pressGuideKey(canToggle: false), KeyEventResult.handled);
+    expect(toggles, 0);
+
+    expect(pressGuideKey(canToggle: true), KeyEventResult.handled);
+    expect(toggles, 1, reason: 'one press, one toggle');
+  });
+
+  testWidgets('the remote channel keys step the channel only in a switchable GalTV session', (tester) async {
+    final service = await KeyboardShortcutsService.getInstance();
+    addTearDown(service.dispose);
+    final player = _FakePlayer();
+    final steps = <int>[];
+
+    KeyEventResult press(PhysicalKeyboardKey physical, LogicalKeyboardKey logical, {required bool canSwitch, bool repeat = false}) {
+      final event = repeat
+          ? KeyRepeatEvent(physicalKey: physical, logicalKey: logical, timeStamp: Duration.zero)
+          : KeyDownEvent(physicalKey: physical, logicalKey: logical, timeStamp: Duration.zero);
+      return service.handleVideoPlayerKeyEvent(
+        event,
+        player,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        canControlPlayback: true,
+        canNavigateMediaItems: true,
+        canSwitchGalTvChannel: canSwitch,
+        onGalTvChannelStep: steps.add,
+      );
+    }
+
+    // Swallowed without a channel to switch to — a stale binding must never leak
+    // through — but nothing happens.
+    expect(press(PhysicalKeyboardKey.channelUp, LogicalKeyboardKey.channelUp, canSwitch: false), KeyEventResult.handled);
+    expect(steps, isEmpty);
+
+    expect(press(PhysicalKeyboardKey.channelUp, LogicalKeyboardKey.channelUp, canSwitch: true), KeyEventResult.handled);
+    expect(press(PhysicalKeyboardKey.channelDown, LogicalKeyboardKey.channelDown, canSwitch: true), KeyEventResult.handled);
+    expect(steps, [1, -1]);
+
+    // One press is one step: holding the key must not stack in-place reloads.
+    expect(
+      press(PhysicalKeyboardKey.channelUp, LogicalKeyboardKey.channelUp, canSwitch: true, repeat: true),
+      KeyEventResult.handled,
+    );
+    expect(steps, [1, -1], reason: 'a repeat is consumed, not a second step');
+  });
 }
 
 class _FakePlayer implements Player {

@@ -5,7 +5,16 @@
 #include <mutex>
 #include <vector>
 
+// sdk_26100.h is a vendored copy of the Win11 24H2 (10.0.26100) display-config
+// structs, and only compiles at all when the installed Windows SDK predates
+// that (#ifndef NTDDI_WIN11_GE). Its anonymous unions are a level-4 C4201,
+// which APPLY_STANDARD_SETTINGS' /WX promotes to an error - so a machine on an
+// older SDK (e.g. 10.0.22621) fails where CI's newer-SDK runner silently skips
+// the block. Scope the suppression to the third-party header only.
+#pragma warning(push)
+#pragma warning(disable : 4201)  // nonstandard extension used: nameless struct/union
 #include "sdk_26100.h"
+#pragma warning(pop)
 
 namespace mpv {
 

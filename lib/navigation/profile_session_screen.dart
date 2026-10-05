@@ -22,6 +22,7 @@ import '../providers/multi_server_provider.dart';
 import '../providers/playback_state_provider.dart';
 import '../providers/seerr_account_provider.dart';
 import '../providers/trackers_provider.dart';
+import '../providers/tunarr_account_provider.dart';
 import '../providers/watch_state_store.dart';
 import '../database/app_database.dart';
 import '../screens/main_screen.dart';
@@ -180,6 +181,24 @@ class _ProfileSessionScreenState extends State<ProfileSessionScreen> {
                   unawaited(
                     provider.onActiveProfileChanged(activeId).catchError((Object e, StackTrace s) {
                       appLogger.w('Seerr profile hydrate failed', error: e, stackTrace: s);
+                    }),
+                  );
+                  return provider;
+                },
+              ),
+              ChangeNotifierProvider(
+                create: (context) {
+                  final provider = TunarrAccountProvider();
+                  provider.bindPlexTokenSupplier(
+                    buildTunarrPlexTokenSupplier(
+                      activeProfile: context.read<ActiveProfileProvider>(),
+                      connections: context.read<ConnectionRegistry>(),
+                      profileConnections: context.read<ProfileConnectionRegistry>(),
+                    ),
+                  );
+                  unawaited(
+                    provider.onActiveProfileChanged(activeId).catchError((Object e, StackTrace s) {
+                      appLogger.w('Tunarr profile hydrate failed', error: e, stackTrace: s);
                     }),
                   );
                   return provider;

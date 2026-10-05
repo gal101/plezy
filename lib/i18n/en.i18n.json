@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "Plezy"
+    "title": "GalTV"
   },
   "auth": {
     "signInWithPlex": "Sign in with Plex",
@@ -479,7 +479,10 @@
       "subSeekPrev": "Seek to Previous Subtitle",
       "shaderToggle": "Toggle Shaders",
       "skipMarker": "Skip Intro/Credits",
-      "screenshot": "Take Screenshot"
+      "screenshot": "Take Screenshot",
+      "galTvGuide": "Toggle TV Guide",
+      "galTvChannelUp": "Next Channel",
+      "galTvChannelDown": "Previous Channel"
     }
   },
   "fileInfo": {
@@ -692,6 +695,8 @@
   },
   "videoControls": {
     "audioLabel": "Audio",
+    "playMethodDirectPlay": "Direct Play",
+    "playMethodTranscode": "Transcoding",
     "subtitlesLabel": "Subtitles",
     "addTime": "+${amount}${unit}",
     "letterbox": "Letterbox",
@@ -2227,6 +2232,32 @@
     "permissionDenied": "Seerr denied this action: your account no longer has the required permission",
     "permissionRevoked": "You no longer have permission to request this"
   },
+  "tunarr": {
+    "title": "Tunarr",
+    "connectTitle": "Connect to Tunarr",
+    "serverUrl": "Tunarr address",
+    "signInWithPlex": "Sign in with Plex",
+    "instance": "Instance",
+    "disconnectConfirm": "Disconnect Tunarr?",
+    "disconnectConfirmBody": "The GalTV tab will be hidden until you sign in again.",
+    "galtvToggle": "GalTV tab",
+    "galtvToggleSubtitle": "Show the GalTV tab in the navigation"
+  },
+  "galtv": {
+    "tabTitle": "GalTV",
+    "emptyTitle": "No channels yet",
+    "emptyBody": "Create a channel in Tunarr and it will show up here.",
+    "watch": "Watch",
+    "tuneFailed": "Could not tune this channel. Check that Tunarr is reachable, then try again.",
+    "nothingPlaying": "Nothing is playing on this channel right now.",
+    "switchFailed": "Could not switch to that channel. Try again.",
+    "resync": "Sync to live",
+    "previousChannel": "Channel −",
+    "nextChannel": "Channel +",
+    "tuning": "Tuning…",
+    "watching": "Watching",
+    "nowBadge": "NOW"
+  },
   "services": {
     "title": "Services",
     "hubSubtitle": "Sync watch progress and request new titles.",
@@ -2243,6 +2274,7 @@
       "anilist": "AniList",
       "simkl": "Simkl",
       "seerr": "Seerr",
+      "tunarr": "Tunarr",
       "mdblist": "MDBList"
     },
     "simklReconnect": {

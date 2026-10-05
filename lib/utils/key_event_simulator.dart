@@ -237,6 +237,8 @@ PhysicalKeyboardKey _getPhysicalKey(LogicalKeyboardKey logicalKey) {
   if (logicalKey == LogicalKeyboardKey.audioVolumeUp) return PhysicalKeyboardKey.audioVolumeUp;
   if (logicalKey == LogicalKeyboardKey.audioVolumeDown) return PhysicalKeyboardKey.audioVolumeDown;
   if (logicalKey == LogicalKeyboardKey.audioVolumeMute) return PhysicalKeyboardKey.audioVolumeMute;
+  if (logicalKey == LogicalKeyboardKey.channelUp) return PhysicalKeyboardKey.channelUp;
+  if (logicalKey == LogicalKeyboardKey.channelDown) return PhysicalKeyboardKey.channelDown;
   if (logicalKey == LogicalKeyboardKey.keyF) return PhysicalKeyboardKey.keyF;
   if (logicalKey == LogicalKeyboardKey.gameButtonA) return PhysicalKeyboardKey.gameButtonA;
   if (logicalKey == LogicalKeyboardKey.gameButtonB) return PhysicalKeyboardKey.gameButtonB;
