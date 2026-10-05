@@ -84,16 +84,41 @@ extension _VideoPlayerGalTvMethods on VideoPlayerScreenState {
   /// offset, while a genuinely new programme is reloaded in place with the same
   /// swap channel surfing uses. Shared by Sync-to-live and end-of-programme
   /// chaining, which differ only in how they obtain the plan.
-  Future<void> _applyGalTvPlan(GalTvTunePlan plan) async {
-    if (plan.plexRatingKey == _currentMetadata.id) {
-      // Same file: jump to the live offset, then re-mark the grid's "now".
+  ///
+  /// **A same-file seek is only valid while the player is still on the file.**
+  /// Parked at its end (`state.completed`: the platforms report eof-reached,
+  /// Android also flips `pause`, and mpv has dropped the item) a bare seek
+  /// repositions nothing — and it still *looks* like it worked, because a seek
+  /// writes its target optimistically — which leaves the viewer on a frozen
+  /// picture that never plays. So [afterCompletion] reopens the item instead,
+  /// and a plan that arrives while the player is parked does too.
+  ///
+  /// [afterCompletion] is set by the end-of-programme path, which must always
+  /// leave the channel playing; Sync-to-live leaves it off so a seek cannot
+  /// override a pause the viewer chose.
+  Future<void> _applyGalTvPlan(GalTvTunePlan plan, {bool afterCompletion = false}) async {
+    final currentPlayer = player;
+    final parkedAtEnd = currentPlayer?.state.completed ?? false;
+    if (!afterCompletion && !parkedAtEnd && plan.plexRatingKey == _currentMetadata.id) {
+      // Same file, still on the file: jump to the live offset, then re-mark the
+      // grid's "now".
       await _seekPlayback(plan.seekOffset);
       if (!mounted || _shuttingDown) return;
       _adoptGalTvChannel(plan);
       return;
     }
 
-    // A different item is airing now — reuse the in-place switch path.
+    if (afterCompletion && currentPlayer != null) {
+      // The channel must keep playing, so mark the intent *before* the reopen: a
+      // reload only auto-starts an item that was playing, and a parked player is
+      // reported as not playing. This is also where a restriction refusing
+      // playback (automotive) clears the intent instead.
+      await _playWithPlaybackIntent(currentPlayer);
+      if (!mounted || _shuttingDown) return;
+    }
+
+    // A different item is airing now — or this one had already ended — so reuse
+    // the in-place switch path.
     await _runGalTvSwitch(() async => plan);
   }
 
@@ -136,12 +161,12 @@ extension _VideoPlayerGalTvMethods on VideoPlayerScreenState {
       if (plan.plexRatingKey == _currentMetadata.id) {
         // Same file. If the schedule still points at the tail of the item we just
         // finished, there is nothing to play yet — wait for it to tick over
-        // rather than seeking straight back into EOF.
+        // rather than reopening straight into the end and ending again.
         final durationMs = _currentMetadata.durationMs;
         if (durationMs != null && plan.seekOffset.inMilliseconds >= durationMs - 1000) continue;
       }
 
-      await _applyGalTvPlan(plan);
+      await _applyGalTvPlan(plan, afterCompletion: true);
       return;
     }
 
