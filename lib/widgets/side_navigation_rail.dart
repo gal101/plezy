@@ -911,6 +911,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
         SettingsService.instance.listenable(SettingsService.groupLibrariesByServer),
         SettingsService.instance.listenable(SettingsService.showExploreTab),
         SettingsService.instance.listenable(SettingsService.enableGaltv),
+        SettingsService.instance.listenable(SettingsService.galtvOverridesLiveTv),
         SettingsService.instance.listenable(SettingsService.librariesSectionExpanded),
       ]),
       builder: (context, _) {
@@ -919,6 +920,12 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
         // user-facing toggle is on.
         final hasGalTv =
             (tunarrAccount?.isConnected ?? false) && SettingsService.instance.read(SettingsService.enableGaltv);
+        // GalTV takes Live TV's slot while both are available — the same rule the
+        // shell's tab list applies, so the rail cannot advertise a tab the shell
+        // has already dropped (and vice versa). The rail builds its own item list,
+        // so it has to evaluate the override itself rather than inheriting it.
+        final showLiveTv =
+            hasLiveTv && !(SettingsService.instance.read(SettingsService.galtvOverridesLiveTv) && hasGalTv);
         // Server grouping: only when multi-server AND the user-facing toggle is on.
         final groupByServerSetting = SettingsService.instance.read(SettingsService.groupLibrariesByServer);
         final showServerHeaders = serverIds.length > 1 && groupByServerSetting;
@@ -940,7 +947,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
             visibleRows: visibleRows,
             hiddenRows: hiddenRows,
             hasHiddenLibraries: hiddenLibraries.isNotEmpty,
-            hasLiveTv: hasLiveTv,
+            hasLiveTv: showLiveTv,
             hasNowPlaying: nowPlayingTrack != null,
             hasExplore: hasExplore,
             hasGalTv: hasGalTv,
@@ -950,7 +957,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
           visibleRows,
           hiddenRows,
           hasHiddenLibraries: hiddenLibraries.isNotEmpty,
-          hasLiveTv: hasLiveTv,
+          hasLiveTv: showLiveTv,
           hasNowPlaying: nowPlayingTrack != null,
           hasExplore: hasExplore,
           hasGalTv: hasGalTv,
@@ -1059,7 +1066,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
                                         isCollapsed: isCollapsed,
                                       ),
                                       const SizedBox(height: _itemGap),
-                                      if (context.watch<MultiServerProvider>().hasLiveTv) ...[
+                                      if (showLiveTv) ...[
                                         _buildNavItem(
                                           icon: Symbols.live_tv_rounded,
                                           selectedIcon: Symbols.live_tv_rounded,
