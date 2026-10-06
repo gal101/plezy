@@ -56,6 +56,7 @@ Widget _app({
   required String? currentChannelId,
   void Function(String channelId)? onSelectChannel,
   String? channelLogoUrl,
+  Future<String?> Function(String ratingKey)? summaryProvider,
 }) => MaterialApp(
   theme: monoTheme(dark: true),
   home: Scaffold(
@@ -66,6 +67,7 @@ Widget _app({
       currentChannelId: currentChannelId,
       channelLabel: 'CH 1 · War Movies',
       channelLogoUrl: channelLogoUrl,
+      summaryProvider: summaryProvider,
       isSwitching: false,
       onSelectChannel: onSelectChannel,
       onClose: () {},
@@ -494,6 +496,7 @@ void main() {
     // The hour is emphasized; the half hour stays quiet.
     expect(tester.widget<Text>(find.text('20:00')).style!.fontWeight, FontWeight.w700);
     expect(tester.widget<Text>(find.text('20:30')).style!.fontWeight, FontWeight.w400);
+    expect(tester.widget<Text>(find.text('20:00')).style!.fontSize, 12);
 
     final tickBefore = tester.getRect(find.text('20:00')).left;
     await tester.drag(find.text('P1'), const Offset(-160, 0));
@@ -518,6 +521,74 @@ void main() {
 
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('the focused row grows and carries the airing programme’s description', (tester) async {
+    final now = DateTime.now();
+    final requested = <String>[];
+    final rows = [
+      _describedRow('war', '1', 'War Movies', now: now, ratingKey: '101'),
+      _describedRow('comedy', '2', 'Comedy', now: now, ratingKey: '202'),
+    ];
+    Future<String?> summary(String ratingKey) async {
+      requested.add(ratingKey);
+      return 'Synopsis $ratingKey';
+    }
+
+    await tester.pumpWidget(
+      _app(rows: rows, currentChannelId: 'war', onSelectChannel: (_) {}, summaryProvider: summary),
+    );
+    await tester.pumpAndSettle();
+
+    expect(requested, ['101'], reason: 'only the row the viewer is on resolves a description');
+    expect(find.text('Synopsis 101'), findsOneWidget);
+    expect(
+      _rowCard(tester, 'War Movies').height,
+      greaterThan(_rowCard(tester, 'Comedy').height),
+      reason: 'the selected channel reads fatter than the rest',
+    );
+
+    // The D-pad moves on to channel 2: it takes the extra height and the
+    // description, and channel 1 gives both back.
+    await tester.pumpWidget(
+      _app(rows: rows, currentChannelId: 'comedy', onSelectChannel: (_) {}, summaryProvider: summary),
+    );
+    await tester.pumpAndSettle();
+
+    expect(requested, ['101', '202']);
+    expect(find.text('Synopsis 202'), findsOneWidget);
+    expect(find.text('Synopsis 101'), findsNothing, reason: 'the row that lost focus drops its description');
+    expect(
+      _rowCard(tester, 'Comedy').height,
+      greaterThan(_rowCard(tester, 'War Movies').height),
+      reason: 'the height follows the selection',
+    );
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a row airing something with no Plex identity keeps its normal height', (tester) async {
+    // A `flex` break is airing: there is nothing to describe, so the focused row
+    // must not reserve (and leave empty) the description band.
+    final now = DateTime.now();
+    final rows = [
+      _row('war', '1', 'War Movies', current: true, now: now),
+      _describedRow('comedy', '2', 'Comedy', now: now, ratingKey: '202'),
+    ];
+
+    await tester.pumpWidget(
+      _app(
+        rows: rows,
+        currentChannelId: 'war',
+        onSelectChannel: (_) {},
+        summaryProvider: (ratingKey) async => 'Synopsis $ratingKey',
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Synopsis'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+  });
 }
 
 /// The rect of the card showing [title]: the nearest [Container] ancestor of its
@@ -530,3 +601,32 @@ String _clockLabel(DateTime time) {
   String two(int value) => value.toString().padLeft(2, '0');
   return '${two(local.hour)}:${two(local.minute)}';
 }
+
+/// The rect of the channel row showing [channelName] — the card that takes the
+/// extra height when the row is the selected one.
+Rect _rowCard(WidgetTester tester, String channelName) =>
+    tester.getRect(find.ancestor(of: find.text(channelName), matching: find.byType(AnimatedContainer)).first);
+
+/// A row whose single programme is airing right now *and* carries a Plex
+/// `ratingKey`, so the row has something to describe.
+GalTvGuideRow _describedRow(
+  String id,
+  String number,
+  String name, {
+  required DateTime now,
+  required String ratingKey,
+}) => GalTvGuideRow(
+  channelId: id,
+  channelNumber: number,
+  channelName: name,
+  entries: [
+    GalTvGuideEntry(
+      title: '$name feature',
+      start: now.subtract(const Duration(minutes: 30)),
+      stop: now.add(const Duration(minutes: 90)),
+      isPlayable: true,
+      isCurrent: false,
+      ratingKey: ratingKey,
+    ),
+  ],
+);

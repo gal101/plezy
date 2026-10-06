@@ -8,6 +8,7 @@ import '../../i18n/strings.g.dart';
 import '../../media/media_server_client.dart';
 import '../../models/galtv/galtv_guide.dart';
 import '../../theme/mono_tokens.dart';
+import '../../utils/app_logger.dart';
 import '../../utils/media_image_helper.dart';
 import '../optimized_media_image.dart';
 import '../video_controls/widgets/channel_logo.dart';
@@ -131,6 +132,7 @@ class GalTvGuideOverlay extends StatefulWidget {
     this.channelLogoUrl,
     this.logoHeaders,
     this.client,
+    this.summaryProvider,
     required this.isSwitching,
     required this.onSelectChannel,
     required this.onClose,
@@ -162,6 +164,16 @@ class GalTvGuideOverlay extends StatefulWidget {
   /// ([OptimizedMediaImage] → `/library/metadata/{ratingKey}/art`, sized and
   /// disk-cached), never through Tunarr. Null disables the artwork.
   final MediaServerClient? client;
+
+  /// Resolves a programme's synopsis from its Plex `ratingKey` — the text the
+  /// rest of the app shows on an item's detail page.
+  ///
+  /// When null the overlay uses the ordinary route through [client]
+  /// (`fetchItem`, i.e. `/library/metadata/{ratingKey}`); the seam exists so a
+  /// caller with no client to hand can still supply descriptions. Only the row
+  /// the viewer has focused is ever asked, so a guide of twenty channels costs
+  /// one description, not twenty.
+  final Future<String?> Function(String ratingKey)? summaryProvider;
 
   /// A channel switch is in flight; the grid dims and the header shows progress.
   final bool isSwitching;
@@ -202,6 +214,39 @@ class _GalTvGuideOverlayState extends State<GalTvGuideOverlay> {
   /// at 0) and reports its scrolls here; every other row follows. Without this the
   /// rows scrolled independently and the ruler above them could not stay true.
   final ValueNotifier<double> _horizontalOffset = ValueNotifier<double>(0);
+
+  /// Programme synopses by Plex `ratingKey`. Filled on demand — only the row the
+  /// viewer has focused asks for one — and kept for the layer's lifetime so
+  /// walking the grid back and forth does not refetch.
+  final Map<String, Future<String?>> _summaries = {};
+
+  /// The resolver the rows get, or null when this session cannot fetch a
+  /// synopsis at all (no client and no injected provider) — the rows then never
+  /// reserve space for one.
+  Future<String?> Function(String ratingKey)? get _summaryResolver =>
+      (widget.summaryProvider == null && widget.client == null) ? null : _loadSummary;
+
+  Future<String?> _loadSummary(String ratingKey) {
+    return _summaries.putIfAbsent(ratingKey, () async {
+      final provider = widget.summaryProvider;
+      if (provider != null) return _nonEmptySummary(await provider(ratingKey));
+      final client = widget.client;
+      if (client == null) return null;
+      try {
+        // The app's normal route to an item's description — the same call the
+        // detail screen makes, so an episode shows the episode's own synopsis.
+        return _nonEmptySummary((await client.fetchItem(ratingKey))?.summary);
+      } catch (error, stackTrace) {
+        appLogger.w('GalTV programme summary failed', error: error, stackTrace: stackTrace);
+        return null;
+      }
+    });
+  }
+
+  static String? _nonEmptySummary(String? value) {
+    final trimmed = value?.trim();
+    return trimmed == null || trimmed.isEmpty ? null : trimmed;
+  }
 
   /// Focus the tuned channel's row on open — never the close button, which is
   /// only the fallback.
@@ -432,6 +477,7 @@ class _GalTvGuideOverlayState extends State<GalTvGuideOverlay> {
                 now: now,
                 windowStart: windowStart,
                 scrollOffset: _horizontalOffset,
+                summaryFor: _summaryResolver,
                 onSelect: widget.onSelectChannel,
               );
             },
@@ -521,6 +567,7 @@ class _GalTvGuideRowTile extends StatefulWidget {
     required this.now,
     required this.windowStart,
     required this.scrollOffset,
+    required this.summaryFor,
     required this.onSelect,
   });
 
@@ -547,6 +594,10 @@ class _GalTvGuideRowTile extends StatefulWidget {
   /// scrolls back into it.
   final ValueNotifier<double> scrollOffset;
 
+  /// Resolves the synopsis of a programme by its Plex `ratingKey`. Null when the
+  /// session cannot fetch one — the row then never reserves the space.
+  final Future<String?> Function(String ratingKey)? summaryFor;
+
   /// The grid-wide time scale, fitted to the panel by the overlay.
   final double pixelsPerMinute;
 
@@ -559,7 +610,16 @@ class _GalTvGuideRowTile extends StatefulWidget {
 class _GalTvGuideRowTileState extends State<_GalTvGuideRowTile> {
   static const double _rowHeight = 132.0;
 
+  /// Extra height the focused row takes for the airing programme's synopsis. It
+  /// is what makes the selected channel read as "fatter" than the others.
+  static const double _descriptionHeight = 64.0;
+
   bool _focused = false;
+
+  /// The synopsis currently shown, and the ratingKey it belongs to — so a stale
+  /// fetch can never paint over the row that has since been focused.
+  String? _summaryRatingKey;
+  String? _summary;
 
   /// This row's own horizontal controller. The vertical list recycles rows, so a
   /// single [ScrollController] shared by every strip cannot be used: a position
@@ -584,7 +644,55 @@ class _GalTvGuideRowTileState extends State<_GalTvGuideRowTile> {
       if (!mounted) return;
       _ready = true;
       _applySharedOffset();
+      _syncSummary();
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant _GalTvGuideRowTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The clock rolls over a programme boundary while the row stays focused, so
+    // the description has to be re-resolved for whatever is airing now. Deferred:
+    // didUpdateWidget runs inside the parent's build.
+    if (oldWidget.now != widget.now || oldWidget.row != widget.row || oldWidget.summaryFor != widget.summaryFor) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _syncSummary();
+      });
+    }
+  }
+
+  /// The programme this row is airing right now, by the wall clock — the same
+  /// rule the cell's badge uses.
+  GalTvGuideEntry? get _airingEntry {
+    for (final entry in widget.row.entries) {
+      if (!widget.now.isBefore(entry.start) && widget.now.isBefore(entry.stop)) return entry;
+    }
+    return null;
+  }
+
+  /// Whether this row takes the fatter, descriptive form: it has focus, the
+  /// session can resolve a synopsis, and it is airing something with a Plex
+  /// identity (a `flex` break has nothing to describe).
+  bool get _describesProgramme => _focused && widget.summaryFor != null && _airingEntry?.ratingKey != null;
+
+  /// Fetch the description for whatever this row is airing, or drop it once the
+  /// row loses focus. Only one row is focused at a time, so the grid resolves at
+  /// most one synopsis — the description is never fetched for rows the viewer has
+  /// not looked at.
+  void _syncSummary() {
+    final ratingKey = _describesProgramme ? _airingEntry!.ratingKey : null;
+    if (ratingKey == _summaryRatingKey) return;
+    _summaryRatingKey = ratingKey;
+    _summary = null;
+    if (ratingKey == null) {
+      if (mounted) setState(() {});
+      return;
+    }
+    widget.summaryFor!(ratingKey).then((value) {
+      if (!mounted || _summaryRatingKey != ratingKey) return;
+      setState(() => _summary = value);
+    });
+    if (mounted) setState(() {});
   }
 
   @override
@@ -639,187 +747,231 @@ class _GalTvGuideRowTileState extends State<_GalTvGuideRowTile> {
           canRequestFocus: interactive,
           onTap: interactive ? () => widget.onSelect!(widget.row.channelId) : null,
           onFocusChange: (value) {
-            if (_focused != value) setState(() => _focused = value);
+            if (_focused == value) return;
+            setState(() => _focused = value);
+            // Focus *is* the selection here: the row the D-pad sits on is the one
+            // that grows and shows its programme's description.
+            _syncSummary();
           },
           borderRadius: BorderRadius.circular(12),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            height: _rowHeight,
-            decoration: BoxDecoration(
-              color: rowFill,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: borderColor, width: _rowBorderWidth),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SizedBox(
-                  width: _channelColumnWidth,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+          // The focused row carries the extra synopsis band; `AnimatedSize` grows
+          // and clips it so the rows below slide instead of jumping, and so a
+          // half-finished animation can never overflow.
+          child: AnimatedSize(
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              decoration: BoxDecoration(
+                color: rowFill,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: borderColor, width: _rowBorderWidth),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(
+                    height: _rowHeight,
                     child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        // The channel number reads as a badge, not a whisper.
-                        Container(
-                          constraints: const BoxConstraints(minWidth: 30),
-                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: selected ? theme.colorScheme.primary : tk.text.withValues(alpha: 0.14),
-                            borderRadius: BorderRadius.circular(tk.radiusSm),
-                          ),
-                          child: Text(
-                            widget.row.channelNumber,
-                            textAlign: TextAlign.center,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: selected ? theme.colorScheme.onPrimary : tk.text,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
+                        SizedBox(
+                          width: _channelColumnWidth,
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                            child: Row(
+                              children: [
+                                // The channel number reads as a badge, not a whisper.
+                                Container(
+                                  constraints: const BoxConstraints(minWidth: 30),
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: selected ? theme.colorScheme.primary : tk.text.withValues(alpha: 0.14),
+                                    borderRadius: BorderRadius.circular(tk.radiusSm),
+                                  ),
+                                  child: Text(
+                                    widget.row.channelNumber,
+                                    textAlign: TextAlign.center,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: selected ? theme.colorScheme.onPrimary : tk.text,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                // Logo stacked over the name: the name then gets the full
+                                // column width, so a long channel name fits on one line,
+                                // and the logo can be big enough to actually read.
+                                Expanded(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      if (widget.row.logoUrl != null) ...[
+                                        ChannelLogo(
+                                          url: widget.row.logoUrl!,
+                                          size: _logoSize,
+                                          headers: widget.logoHeaders,
+                                        ),
+                                        const SizedBox(height: 6),
+                                      ],
+                                      Text(
+                                        widget.row.channelName,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: tk.text,
+                                          fontSize: 15,
+                                          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                                        ),
+                                      ),
+                                      // The status line is reserved on every row, so the
+                                      // channel names line up across the grid instead of
+                                      // drifting by a line height on the tuned row.
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 2),
+                                        child: Row(
+                                          children: [
+                                            if (selected) ...[
+                                              Icon(
+                                                Symbols.play_arrow_rounded,
+                                                size: 13,
+                                                color: theme.colorScheme.primary,
+                                              ),
+                                              const SizedBox(width: 2),
+                                            ],
+                                            Flexible(
+                                              child: Text(
+                                                selected ? t.galtv.watching : '',
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  color: theme.colorScheme.primary,
+                                                  fontSize: 11,
+                                                  height: 1.2,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        // Logo stacked over the name: the name then gets the full
-                        // column width, so a long channel name fits on one line,
-                        // and the logo can be big enough to actually read.
                         Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (widget.row.logoUrl != null) ...[
-                                ChannelLogo(url: widget.row.logoUrl!, size: _logoSize, headers: widget.logoHeaders),
-                                const SizedBox(height: 6),
-                              ],
-                              Text(
-                                widget.row.channelName,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: tk.text,
-                                  fontSize: 15,
-                                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                                ),
-                              ),
-                              // The status line is reserved on every row, so the
-                              // channel names line up across the grid instead of
-                              // drifting by a line height on the tuned row.
-                              Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child: Row(
-                                  children: [
-                                    if (selected) ...[
-                                      Icon(Symbols.play_arrow_rounded, size: 13, color: theme.colorScheme.primary),
-                                      const SizedBox(width: 2),
-                                    ],
-                                    Flexible(
-                                      child: Text(
-                                        selected ? t.galtv.watching : '',
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: theme.colorScheme.primary,
-                                          fontSize: 11,
-                                          height: 1.2,
-                                          fontWeight: FontWeight.w700,
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              // The fade only earns its place when the strip really
+                              // overflows; on a full-width panel the whole window fits and
+                              // a permanent gradient would just dim the last cell.
+                              final contentWidth = _rowWidthAt(widget.row, widget.pixelsPerMinute);
+                              final scrollable = contentWidth > constraints.maxWidth - 2 * _stripPadding + 1;
+                              final rowBase = Color.alphaBlend(rowFill, tk.bg);
+                              // The gap this channel's schedule has at the window start.
+                              // Left padding is part of the row's coordinates: a cell at
+                              // time T always sits at `leading + (T − windowStart)`, which
+                              // is what makes one ruler correct for every channel.
+                              final leadingWidth = _leadingWidthFor(widget.row, widget.pixelsPerMinute);
+                              final windowStart = widget.windowStart;
+                              final nowPx = windowStart == null
+                                  ? null
+                                  : widget.now.difference(windowStart).inMilliseconds / 60000 * widget.pixelsPerMinute;
+                              return Stack(
+                                children: [
+                                  // No separator: a cell's box pitch is its duration, and
+                                  // the visible gutter lives inside the box, so boxes stay
+                                  // on the time axis.
+                                  ListView.builder(
+                                    controller: _stripController,
+                                    scrollDirection: Axis.horizontal,
+                                    padding: EdgeInsets.fromLTRB(_stripPadding + leadingWidth, 8, _stripPadding, 8),
+                                    itemCount: widget.row.entries.length,
+                                    itemBuilder: (context, index) => _GalTvGuideEntryTile(
+                                      entry: widget.row.entries[index],
+                                      tokens: tk,
+                                      pixelsPerMinute: widget.pixelsPerMinute,
+                                      now: widget.now,
+                                      client: widget.client,
+                                    ),
+                                  ),
+                                  // The now line runs down the whole grid at `now`'s `x`,
+                                  // so a channel's position in its own schedule reads at a
+                                  // glance. It is a sibling of the strip (not inside the
+                                  // scroll view), so it subtracts the shared offset itself
+                                  // and repaints as the grid scrolls.
+                                  if (nowPx != null)
+                                    Positioned.fill(
+                                      child: IgnorePointer(
+                                        child: CustomPaint(
+                                          painter: _NowLinePainter(
+                                            nowPx: nowPx,
+                                            stripPadding: _stripPadding,
+                                            color: Theme.of(context).colorScheme.primary,
+                                            offset: widget.scrollOffset,
+                                          ),
                                         ),
                                       ),
                                     ),
-                                  ],
-                                ),
-                              ),
-                            ],
+                                  // A thin fade marks the strip as scrollable, so a title
+                                  // cut off at the panel edge reads as "more to the right"
+                                  // rather than as broken text.
+                                  if (scrollable)
+                                    Positioned(
+                                      right: 0,
+                                      top: 0,
+                                      bottom: 0,
+                                      width: 26,
+                                      child: IgnorePointer(
+                                        child: DecoratedBox(
+                                          decoration: BoxDecoration(
+                                            gradient: LinearGradient(
+                                              begin: Alignment.centerLeft,
+                                              end: Alignment.centerRight,
+                                              colors: [rowBase.withValues(alpha: 0), rowBase],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              );
+                            },
                           ),
                         ),
                       ],
                     ),
                   ),
-                ),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      // The fade only earns its place when the strip really
-                      // overflows; on a full-width panel the whole window fits and
-                      // a permanent gradient would just dim the last cell.
-                      final contentWidth = _rowWidthAt(widget.row, widget.pixelsPerMinute);
-                      final scrollable = contentWidth > constraints.maxWidth - 2 * _stripPadding + 1;
-                      final rowBase = Color.alphaBlend(rowFill, tk.bg);
-                      // The gap this channel's schedule has at the window start.
-                      // Left padding is part of the row's coordinates: a cell at
-                      // time T always sits at `leading + (T − windowStart)`, which
-                      // is what makes one ruler correct for every channel.
-                      final leadingWidth = _leadingWidthFor(widget.row, widget.pixelsPerMinute);
-                      final windowStart = widget.windowStart;
-                      final nowPx = windowStart == null
-                          ? null
-                          : widget.now.difference(windowStart).inMilliseconds / 60000 * widget.pixelsPerMinute;
-                      return Stack(
-                        children: [
-                          // No separator: a cell's box pitch is its duration, and
-                          // the visible gutter lives inside the box, so boxes stay
-                          // on the time axis.
-                          ListView.builder(
-                            controller: _stripController,
-                            scrollDirection: Axis.horizontal,
-                            padding: EdgeInsets.fromLTRB(_stripPadding + leadingWidth, 8, _stripPadding, 8),
-                            itemCount: widget.row.entries.length,
-                            itemBuilder: (context, index) => _GalTvGuideEntryTile(
-                              entry: widget.row.entries[index],
-                              tokens: tk,
-                              pixelsPerMinute: widget.pixelsPerMinute,
-                              now: widget.now,
-                              client: widget.client,
-                            ),
-                          ),
-                          // The now line runs down the whole grid at `now`'s `x`,
-                          // so a channel's position in its own schedule reads at a
-                          // glance. It is a sibling of the strip (not inside the
-                          // scroll view), so it subtracts the shared offset itself
-                          // and repaints as the grid scrolls.
-                          if (nowPx != null)
-                            Positioned.fill(
-                              child: IgnorePointer(
-                                child: CustomPaint(
-                                  painter: _NowLinePainter(
-                                    nowPx: nowPx,
-                                    stripPadding: _stripPadding,
-                                    color: Theme.of(context).colorScheme.primary,
-                                    offset: widget.scrollOffset,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          // A thin fade marks the strip as scrollable, so a title
-                          // cut off at the panel edge reads as "more to the right"
-                          // rather than as broken text.
-                          if (scrollable)
-                            Positioned(
-                              right: 0,
-                              top: 0,
-                              bottom: 0,
-                              width: 26,
-                              child: IgnorePointer(
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      begin: Alignment.centerLeft,
-                                      end: Alignment.centerRight,
-                                      colors: [rowBase.withValues(alpha: 0), rowBase],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-              ],
+                  if (_describesProgramme) SizedBox(height: _descriptionHeight, child: _buildDescription(tk)),
+                ],
+              ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  /// The airing programme's synopsis — the same Plex text the item's detail page
+  /// shows. Empty while it resolves: the band keeps its height so the row cannot
+  /// jump when the words land.
+  Widget _buildDescription(MonoTokens tk) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 0, 16, 10),
+      child: Text(
+        _summary ?? '',
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: tk.textMuted, fontSize: 13, height: 1.3),
       ),
     );
   }
@@ -1060,7 +1212,7 @@ class _GalTvTimeRuler extends StatelessWidget {
     final now = DateTime.now();
     final ticks = _halfHourTicks(windowStart, windowEnd);
     return SizedBox(
-      height: 26,
+      height: 28,
       child: Padding(
         // The ruler spans exactly the strips below it; a tick then lands on the
         // same `x` as the cell for the programme that starts at it.
@@ -1077,7 +1229,7 @@ class _GalTvTimeRuler extends StatelessWidget {
                     left: _stripPadding + _xAt(tick) - scroll,
                     top: 0,
                     bottom: 0,
-                    width: 46,
+                    width: 54,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -1089,7 +1241,7 @@ class _GalTvTimeRuler extends StatelessWidget {
                           // The hour stands out; the half hour is a quieter mark.
                           style: TextStyle(
                             color: tokens.textMuted,
-                            fontSize: 11,
+                            fontSize: 12,
                             height: 1.1,
                             fontWeight: tick.minute == 0 ? FontWeight.w700 : FontWeight.w400,
                           ),
