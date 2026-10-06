@@ -962,18 +962,47 @@ class _GalTvGuideRowTileState extends State<_GalTvGuideRowTile> {
   }
 
   /// The airing programme's synopsis — the same Plex text the item's detail page
-  /// shows. Empty while it resolves: the band keeps its height so the row cannot
-  /// jump when the words land.
+  /// shows.
+  ///
+  /// It is anchored under the cell of the programme it describes (and follows the
+  /// grid's horizontal scroll) rather than running the whole row, so it reads as
+  /// *that* programme's description; its width is capped so a wide panel does not
+  /// turn it back into a full-width band. Empty while it resolves: the band keeps
+  /// its height so the row cannot jump when the words land.
   Widget _buildDescription(MonoTokens tk) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 0, 16, 10),
-      child: Text(
-        _summary ?? '',
-        maxLines: 3,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(color: tk.textMuted, fontSize: 13, height: 1.3),
+    return ValueListenableBuilder<double>(
+      valueListenable: widget.scrollOffset,
+      builder: (context, scroll, _) => LayoutBuilder(
+        builder: (context, constraints) {
+          final rowWidth = constraints.maxWidth;
+          final maxWidth = (rowWidth * 0.45).clamp(240.0, 560.0);
+          final leftLimit = (rowWidth - maxWidth - 16).clamp(12.0, double.infinity);
+          final left = _airingCellX(scroll).clamp(12.0, leftLimit);
+          final available = (rowWidth - left - 16).clamp(0.0, double.infinity);
+          final width = available < maxWidth ? available : maxWidth;
+          return Padding(
+            padding: EdgeInsets.fromLTRB(left, 0, rowWidth - left - width, 10),
+            child: Text(
+              _summary ?? '',
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: tk.textMuted, fontSize: 13, height: 1.3),
+            ),
+          );
+        },
       ),
     );
+  }
+
+  /// Where the airing cell's left edge sits in this card's coordinates — the same
+  /// mapping the strip uses (`_stripPadding` in from the channel column, then the
+  /// time offset from the window start), minus the grid's shared scroll.
+  double _airingCellX(double scroll) {
+    final windowStart = widget.windowStart;
+    final entry = _airingEntry;
+    if (windowStart == null || entry == null) return _channelColumnWidth + _stripPadding;
+    final minutesFromWindowStart = entry.start.difference(windowStart).inMilliseconds / 60000;
+    return _channelColumnWidth + _stripPadding + minutesFromWindowStart * widget.pixelsPerMinute - scroll;
   }
 }
 

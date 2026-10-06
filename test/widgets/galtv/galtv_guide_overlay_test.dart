@@ -547,6 +547,20 @@ void main() {
       reason: 'the selected channel reads fatter than the rest',
     );
 
+    // The text belongs to the airing cell, not to the row: it starts under that
+    // cell and stops well short of the panel edge.
+    final description = tester.getRect(find.text('Synopsis 101'));
+    expect(
+      description.left,
+      closeTo(_cellRect(tester, 'War Movies feature').left, 1),
+      reason: 'the description is grouped with the programme it describes',
+    );
+    expect(
+      description.width,
+      lessThan(_rowCard(tester, 'War Movies').width * 0.6),
+      reason: 'it must not run the whole row',
+    );
+
     // The D-pad moves on to channel 2: it takes the extra height and the
     // description, and channel 1 gives both back.
     await tester.pumpWidget(
