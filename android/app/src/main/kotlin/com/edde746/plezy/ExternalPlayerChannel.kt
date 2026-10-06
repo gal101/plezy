@@ -185,7 +185,9 @@ internal class ExternalPlayerChannel(private val activity: Activity) {
 
     val path = if (filePath.startsWith("file://")) filePath.removePrefix("file://") else filePath
     val file = File(path)
-    val uri = FileProvider.getUriForFile(activity, "com.edde746.plezy.fileprovider", file)
+    // Built from the running package so it always matches the manifest's
+    // `${applicationId}.fileprovider` — the fork ships under its own id.
+    val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file)
     return Source(uri, grantRead = true, fileName = file.name)
   }
 

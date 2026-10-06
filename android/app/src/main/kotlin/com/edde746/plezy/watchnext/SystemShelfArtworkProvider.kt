@@ -22,7 +22,12 @@ import java.util.concurrent.TimeUnit
 
 class SystemShelfArtworkProvider : ContentProvider() {
   companion object {
-    const val AUTHORITY = "com.edde746.plezy.systemshelf.artwork"
+    /**
+     * Must equal the manifest's `${applicationId}.systemshelf.artwork` — the fork
+     * ships under its own id, and a second app publishing the same authority
+     * cannot be installed beside this one.
+     */
+    const val AUTHORITY = "com.gal101.galtv.systemshelf.artwork"
   }
 
   override fun onCreate(): Boolean = context != null

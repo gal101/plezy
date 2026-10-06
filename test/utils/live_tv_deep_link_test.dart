@@ -9,7 +9,7 @@ LiveTvChannel _channel(String key, {String? identifier, String? number, String? 
 void main() {
   group('LiveTvDeepLink.tryParse', () {
     test('parses channel, server and start position', () {
-      final link = LiveTvDeepLink.tryParse('plezy://live?channel=4.1&server=abc123&start=beginning');
+      final link = LiveTvDeepLink.tryParse('galtv://live?channel=4.1&server=abc123&start=beginning');
       expect(link, isNotNull);
       expect(link!.channel, '4.1');
       expect(link.serverId, 'abc123');
@@ -17,21 +17,26 @@ void main() {
     });
 
     test('defaults to asking and any server', () {
-      final link = LiveTvDeepLink.tryParse('plezy://live?channel=KNTV');
+      final link = LiveTvDeepLink.tryParse('galtv://live?channel=KNTV');
       expect(link!.serverId, isNull);
       expect(link.startPosition, LiveTvStartPosition.ask);
     });
 
     test('accepts live start', () {
-      expect(LiveTvDeepLink.tryParse('plezy://live?channel=4&start=live')!.startPosition, LiveTvStartPosition.live);
+      expect(LiveTvDeepLink.tryParse('galtv://live?channel=4&start=live')!.startPosition, LiveTvStartPosition.live);
     });
 
     test('rejects other links and malformed input', () {
       expect(LiveTvDeepLink.tryParse('plezy_server_123'), isNull);
-      expect(LiveTvDeepLink.tryParse('plezy://play?content_id=plezy_a_1'), isNull);
-      expect(LiveTvDeepLink.tryParse('plezy://live'), isNull);
-      expect(LiveTvDeepLink.tryParse('plezy://live?channel='), isNull);
-      expect(LiveTvDeepLink.tryParse('plezy://live?channel=4&start=sideways'), isNull);
+      expect(LiveTvDeepLink.tryParse('galtv://play?content_id=plezy_a_1'), isNull);
+      expect(LiveTvDeepLink.tryParse('galtv://live'), isNull);
+      expect(LiveTvDeepLink.tryParse('galtv://live?channel='), isNull);
+      expect(LiveTvDeepLink.tryParse('galtv://live?channel=4&start=sideways'), isNull);
+      expect(
+        LiveTvDeepLink.tryParse('plezy://live?channel=4'),
+        isNull,
+        reason: 'stock Plezy owns the plezy:// scheme; the fork must not accept its links',
+      );
     });
   });
 

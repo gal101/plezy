@@ -25,16 +25,23 @@ class WatchNextPlugin() :
     private const val TAG = "WatchNextPlugin"
     private const val METHOD_CHANNEL = "com.plezy/watch_next"
     internal const val SCHEMA_VERSION = 3
+
+    /**
+     * The fork's deep-link scheme, matching the two `<data android:scheme>` filters
+     * in AndroidManifest.xml. Stock Plezy owns `plezy://`; sharing it would leave
+     * every shelf and live link ambiguous between the two installed apps.
+     */
+    internal const val DEEP_LINK_SCHEME = "galtv"
     private var pendingDeepLink: String? = null
 
     /**
      * Returns the payload to forward to Dart: the `content_id` of a
-     * `plezy://play` shelf link, or the whole URI of a `plezy://live` link
+     * `galtv://play` shelf link, or the whole URI of a `galtv://live` link
      * (parsed by `LiveTvDeepLink` on the Dart side).
      */
     fun handleIntent(intent: Intent?): String? {
       val data = intent?.data ?: return null
-      if (data.scheme != "plezy") return null
+      if (data.scheme != DEEP_LINK_SCHEME) return null
       return when (data.authority) {
         "play" -> data.getQueryParameter("content_id")
         "live" -> data.toString()

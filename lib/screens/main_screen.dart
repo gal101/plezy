@@ -932,7 +932,7 @@ class _MainScreenState extends State<MainScreen>
   Future<void> _handleShelfContentId(String contentId) async {
     if (!mounted) return;
 
-    // `plezy://live?...` links arrive through the same channel as shelf IDs.
+    // `galtv://live?...` links arrive through the same channel as shelf IDs.
     final liveLink = LiveTvDeepLink.tryParse(contentId);
     if (liveLink != null) {
       try {

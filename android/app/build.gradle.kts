@@ -245,7 +245,13 @@ android {
   }
 
   defaultConfig {
-    applicationId = "com.edde746.plezy"
+    // The fork's own identity. Stock Plezy owns `com.edde746.plezy` (the same id a
+    // sideloaded official APK carries), so sharing it makes the two apps mutually
+    // uninstallable — Android refuses the second one with
+    // "App not installed". The namespace above stays upstream's: it only names the
+    // R/BuildConfig and the Kotlin package, and `namespace` is what resolves the
+    // manifest's relative component names.
+    applicationId = "com.gal101.galtv"
     minSdk = 25 // Fire OS 6.x (API 25); :libmpv shares the same floor
     targetSdk = flutter.targetSdkVersion
     versionCode = flutter.versionCode

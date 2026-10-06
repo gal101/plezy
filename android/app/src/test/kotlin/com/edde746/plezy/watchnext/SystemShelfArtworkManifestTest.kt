@@ -15,7 +15,12 @@ import org.w3c.dom.Element
 class SystemShelfArtworkManifestTest {
   private companion object {
     const val ANDROID_NAMESPACE = "http://schemas.android.com/apk/res/android"
-    const val AUTHORITY = "com.edde746.plezy.systemshelf.artwork"
+
+    /** The provider is identified by its class name — the authority now carries
+     * the `${applicationId}` placeholder so the fork's build cannot publish the
+     * same authority as stock Plezy on one device. */
+    const val PROVIDER_NAME = ".watchnext.SystemShelfArtworkProvider"
+    const val AUTHORITIES = "\${applicationId}.systemshelf.artwork"
     val MANIFEST_CANDIDATES = listOf(
       "src/main/AndroidManifest.xml",
       "app/src/main/AndroidManifest.xml",
@@ -29,6 +34,7 @@ class SystemShelfArtworkManifestTest {
 
     assertEquals("false", provider.getAttributeNS(ANDROID_NAMESPACE, "exported"))
     assertEquals("true", provider.getAttributeNS(ANDROID_NAMESPACE, "grantUriPermissions"))
+    assertEquals(AUTHORITIES, provider.getAttributeNS(ANDROID_NAMESPACE, "authorities"))
   }
 
   private fun artworkProvider(): Element {
@@ -39,9 +45,9 @@ class SystemShelfArtworkManifestTest {
     val providers = manifest.getElementsByTagName("provider")
     for (index in 0 until providers.length) {
       val provider = providers.item(index) as Element
-      if (provider.getAttributeNS(ANDROID_NAMESPACE, "authorities") == AUTHORITY) return provider
+      if (provider.getAttributeNS(ANDROID_NAMESPACE, "name") == PROVIDER_NAME) return provider
     }
-    throw AssertionError("No <provider> declares android:authorities=\"$AUTHORITY\"")
+    throw AssertionError("No <provider> declares android:name=\"$PROVIDER_NAME\"")
   }
 
   private fun manifestFile(): File {
