@@ -566,6 +566,15 @@ class SettingsService extends BaseSharedPreferencesService {
   /// lowest-numbered channel. Device-local: reset by "Reset All Settings", never
   /// carried in a settings export.
   static const galtvLastChannelId = StringPref('galtv_last_channel_id');
+  /// Favourite GalTV channels, as Tunarr channel ids in the order they were
+  /// added. Keyed by id and never by name or number: Tunarr mints a stable UUID
+  /// per channel (`{"id":"4c3a112a-…","name":"…","number":1}`), so renaming,
+  /// renumbering or re-iconing a channel leaves the list intact — while deleting
+  /// a channel and creating another mints a *new* id, so the old entry simply
+  /// stops resolving and stops being shown (`GalTvFavorites.visible`). Reads and
+  /// writes go through `lib/services/galtv/galtv_favorites.dart`. Device-local,
+  /// like [galtvLastChannelId], and never carried in a settings export.
+  static const galtvFavoriteChannelIds = StringListPref('galtv_favorite_channel_ids');
   // Linux native video plane only. Defaults to the compositor: photographed on a
   // 400-nit HDR output against a PQ chart, the compositor keeps 400 -> 1000 nits
   // monotonic and separated while the player leg flattens it. The player path
