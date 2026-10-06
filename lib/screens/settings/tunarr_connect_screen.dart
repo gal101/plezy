@@ -60,8 +60,11 @@ class _TunarrConnectScreenState extends State<TunarrConnectScreen> with AsyncFor
   Future<void> _finish(TunarrAccountProvider account, TunarrSession session) async {
     await account.adoptSession(session);
     // Connecting is the user asking for the GalTV surface: switch its tab on so
-    // the navigation reflects the newly linked instance without a second step.
+    // the navigation reflects the newly linked instance without a second step,
+    // and let it take Live TV's slot (the toggle in the Tunarr settings puts
+    // Live TV back for anyone who wants both).
     await SettingsService.instance.write(SettingsService.enableGaltv, true);
+    await SettingsService.instance.write(SettingsService.galtvOverridesLiveTv, true);
     if (!mounted) return;
     Navigator.of(context).pop(true);
   }

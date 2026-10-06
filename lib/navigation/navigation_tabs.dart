@@ -46,10 +46,14 @@ class NavigationTab {
     bool hasLiveTv = false,
     bool hasExplore = false,
     bool hasGalTv = false,
+    bool galTvOverridesLiveTv = false,
   }) {
+    // GalTV replaces Live TV only while GalTV is actually on screen: with no
+    // session, or with the GalTV toggle off, Live TV stays exactly where it was.
+    final liveTvReplaced = galTvOverridesLiveTv && hasGalTv;
     return allNavigationTabs.where((tab) {
       if (isOffline && tab.onlineOnly) return false;
-      if (tab.id == NavigationTabId.liveTv && !hasLiveTv) return false;
+      if (tab.id == NavigationTabId.liveTv && (!hasLiveTv || liveTvReplaced)) return false;
       if (tab.id == NavigationTabId.explore && !hasExplore) return false;
       if (tab.id == NavigationTabId.galtv && !hasGalTv) return false;
       if (tab.id == NavigationTabId.downloads && PlatformDetector.isAppleTV()) return false;
@@ -67,6 +71,7 @@ class NavigationTab {
     required bool hasLiveTv,
     bool hasExplore = false,
     bool hasGalTv = false,
+    bool galTvOverridesLiveTv = false,
     required NavigationTabId? preferredStartup,
   }) {
     final tabs = getVisibleTabs(
@@ -74,6 +79,7 @@ class NavigationTab {
       hasLiveTv: hasLiveTv,
       hasExplore: hasExplore,
       hasGalTv: hasGalTv,
+      galTvOverridesLiveTv: galTvOverridesLiveTv,
     );
     if (isOffline && tabs.any((t) => t.id == NavigationTabId.downloads)) {
       return NavigationTabId.downloads;

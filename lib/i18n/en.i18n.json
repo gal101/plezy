@@ -2241,7 +2241,9 @@
     "disconnectConfirm": "Disconnect Tunarr?",
     "disconnectConfirmBody": "The GalTV tab will be hidden until you sign in again.",
     "galtvToggle": "GalTV tab",
-    "galtvToggleSubtitle": "Show the GalTV tab in the navigation"
+    "galtvToggleSubtitle": "Show the GalTV tab in the navigation",
+    "galtvOverridesLiveTv": "GalTV tab overrides Live TV",
+    "galtvOverridesLiveTvSubtitle": "Hide the Live TV tab while GalTV is available. Turn this off to keep both tabs."
   },
   "galtv": {
     "tabTitle": "GalTV",

@@ -415,6 +415,10 @@ class _MainScreenState extends State<MainScreen>
   CatalogSourcesProvider? _catalogSourcesProvider;
   ValueListenable<bool>? _showExploreTabListenable;
   ValueListenable<bool>? _enableGaltvListenable;
+
+  /// Watches the "GalTV overrides Live TV" toggle, which moves a tab that is
+  /// already visible rather than changing whether GalTV exists.
+  ValueListenable<bool>? _overridesLiveTvListenable;
   TunarrAccountProvider? _tunarrAccountProvider;
   RouteObserver<PageRoute<dynamic>>? _profileRouteObserver;
   bool _lastHasLiveTv = false;
@@ -558,6 +562,8 @@ class _MainScreenState extends State<MainScreen>
     }
     _enableGaltvListenable = SettingsService.instanceOrNull?.listenable(SettingsService.enableGaltv);
     _enableGaltvListenable?.addListener(_handleTunarrChanged);
+    _overridesLiveTvListenable = SettingsService.instanceOrNull?.listenable(SettingsService.galtvOverridesLiveTv);
+    _overridesLiveTvListenable?.addListener(_handleLiveTvOverrideChanged);
     _currentTab = _defaultTabForMode(_isOffline);
     _lastOnlineTabId = _isOffline ? null : NavigationTabId.discover;
     _autoSwitchedToDownloads = _isOffline && _currentTab == NavigationTabId.downloads;
@@ -1121,6 +1127,7 @@ class _MainScreenState extends State<MainScreen>
     _catalogSourcesProvider?.removeListener(_handleCatalogSourcesChanged);
     _showExploreTabListenable?.removeListener(_handleCatalogSourcesChanged);
     _enableGaltvListenable?.removeListener(_handleTunarrChanged);
+    _overridesLiveTvListenable?.removeListener(_handleLiveTvOverrideChanged);
     _tunarrAccountProvider?.removeListener(_handleTunarrChanged);
     if (_bindingSettleListener != null) {
       _activeProfileForListener?.removeListener(_bindingSettleListener!);
@@ -1304,6 +1311,7 @@ class _MainScreenState extends State<MainScreen>
     hasLiveTv: _hasLiveTv,
     hasExplore: _lastHasExplore,
     hasGalTv: _lastHasGalTv,
+    galTvOverridesLiveTv: SettingsService.instanceOrNull?.read(SettingsService.galtvOverridesLiveTv) ?? true,
     preferredStartup: SettingsService.instanceOrNull?.read(SettingsService.startupSection),
   );
 
@@ -1402,6 +1410,12 @@ class _MainScreenState extends State<MainScreen>
 
     _handleTabAvailabilityChanged();
   }
+
+  /// The override toggle changed. GalTV itself did not move, so
+  /// [_handleTunarrChanged]'s "hasGalTv unchanged" guard would swallow it: take
+  /// the availability path directly, which also moves the viewer off Live TV if
+  /// that is where they are standing when it gets replaced.
+  void _handleLiveTvOverrideChanged() => _handleTabAvailabilityChanged();
 
   void _handleOfflineStatusChanged() {
     final hasVisibleConnectedServers = context.read<MultiServerProvider>().hasConnectedServers;
@@ -2013,6 +2027,10 @@ class _MainScreenState extends State<MainScreen>
       hasLiveTv: _hasLiveTv,
       hasExplore: _lastHasExplore,
       hasGalTv: _hasGalTv,
+      // Read here rather than mirrored into a field: every tab computation in the
+      // shell goes through this one method, so the toggle takes effect everywhere
+      // at once (and a missing SettingsService keeps the default of on).
+      galTvOverridesLiveTv: SettingsService.instanceOrNull?.read(SettingsService.galtvOverridesLiveTv) ?? true,
     );
   }
 

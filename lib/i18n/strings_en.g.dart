@@ -5598,6 +5598,12 @@ class Translations$tunarr$en {
 
 	/// en: 'Show the GalTV tab in the navigation'
 	String get galtvToggleSubtitle => 'Show the GalTV tab in the navigation';
+
+	/// en: 'GalTV tab overrides Live TV'
+	String get galtvOverridesLiveTv => 'GalTV tab overrides Live TV';
+
+	/// en: 'Hide the Live TV tab while GalTV is available. Turn this off to keep both tabs.'
+	String get galtvOverridesLiveTvSubtitle => 'Hide the Live TV tab while GalTV is available. Turn this off to keep both tabs.';
 }
 
 // Path: galtv
@@ -9511,14 +9517,16 @@ extension on Translations {
 			'tunarr.disconnectConfirmBody' => 'The GalTV tab will be hidden until you sign in again.',
 			'tunarr.galtvToggle' => 'GalTV tab',
 			'tunarr.galtvToggleSubtitle' => 'Show the GalTV tab in the navigation',
+			'tunarr.galtvOverridesLiveTv' => 'GalTV tab overrides Live TV',
+			'tunarr.galtvOverridesLiveTvSubtitle' => 'Hide the Live TV tab while GalTV is available. Turn this off to keep both tabs.',
 			'galtv.tabTitle' => 'GalTV',
 			'galtv.emptyTitle' => 'No channels yet',
 			'galtv.emptyBody' => 'Create a channel in Tunarr and it will show up here.',
 			'galtv.watch' => 'Watch',
-			'galtv.tuneFailed' => 'Could not tune this channel. Check that Tunarr is reachable, then try again.',
-			'galtv.nothingPlaying' => 'Nothing is playing on this channel right now.',
 			_ => null,
 		} ?? switch (path) {
+			'galtv.tuneFailed' => 'Could not tune this channel. Check that Tunarr is reachable, then try again.',
+			'galtv.nothingPlaying' => 'Nothing is playing on this channel right now.',
 			'galtv.switchFailed' => 'Could not switch to that channel. Try again.',
 			'galtv.resync' => 'Sync to live',
 			'galtv.previousChannel' => 'Channel −',

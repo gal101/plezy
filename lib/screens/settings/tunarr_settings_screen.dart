@@ -72,6 +72,12 @@ class TunarrSettingsScreen extends StatelessWidget {
                   title: t.tunarr.galtvToggle,
                   subtitle: t.tunarr.galtvToggleSubtitle,
                 ),
+                SettingSwitchTile(
+                  pref: SettingsService.galtvOverridesLiveTv,
+                  icon: Symbols.swap_horiz_rounded,
+                  title: t.tunarr.galtvOverridesLiveTv,
+                  subtitle: t.tunarr.galtvOverridesLiveTvSubtitle,
+                ),
               ],
             ),
             const SizedBox(height: 24),

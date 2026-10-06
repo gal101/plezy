@@ -561,6 +561,14 @@ class SettingsService extends BaseSharedPreferencesService {
   /// sign-in and toggleable from the Tunarr service screen; the tab still also
   /// requires a live Tunarr session, so signing out hides it regardless.
   static const enableGaltv = BoolPref('enable_galtv');
+  /// Whether the GalTV tab *replaces* Live TV in the navigation.
+  ///
+  /// On by default: an install that has signed in to Tunarr asked for the GalTV
+  /// surface, and everyone already signed in before this setting existed is
+  /// therefore already in that state. It only ever hides Live TV while GalTV is
+  /// itself visible, so signing out of Tunarr (or switching [enableGaltv] off)
+  /// brings Live TV back without touching this.
+  static const galtvOverridesLiveTv = BoolPref('galtv_overrides_live_tv', defaultValue: true);
   /// Last GalTV channel the user watched, so opening the tab re-tunes where they
   /// left off. Empty means "never tuned" — the screen then falls back to the
   /// lowest-numbered channel. Device-local: reset by "Reset All Settings", never
@@ -1384,6 +1392,7 @@ class SettingsService extends BaseSharedPreferencesService {
     enableHardwareDecoding,
     enableHDR,
     enableGaltv,
+    galtvOverridesLiveTv,
     hdrToneMapping,
     viewMode,
     seekTimeSmall,
