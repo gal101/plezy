@@ -479,6 +479,7 @@ class _GalTvGuideOverlayState extends State<GalTvGuideOverlay> {
                 scrollOffset: _horizontalOffset,
                 summaryFor: _summaryResolver,
                 onSelect: widget.onSelectChannel,
+                onClose: widget.onClose,
               );
             },
           ),
@@ -569,6 +570,7 @@ class _GalTvGuideRowTile extends StatefulWidget {
     required this.scrollOffset,
     required this.summaryFor,
     required this.onSelect,
+    required this.onClose,
   });
 
   final GalTvGuideRow row;
@@ -602,6 +604,10 @@ class _GalTvGuideRowTile extends StatefulWidget {
   final double pixelsPerMinute;
 
   final void Function(String channelId)? onSelect;
+
+  /// Dismisses the layer. The row that is already the channel on screen uses
+  /// this instead of [onSelect]: its activation is a dismissal, never a re-tune.
+  final VoidCallback onClose;
 
   @override
   State<_GalTvGuideRowTile> createState() => _GalTvGuideRowTileState();
@@ -709,6 +715,21 @@ class _GalTvGuideRowTileState extends State<_GalTvGuideRowTile> {
     if ((widget.scrollOffset.value - value).abs() > 0.5) widget.scrollOffset.value = value;
   }
 
+  /// Activate this row: the channel already playing is a dismissal, anything
+  /// else tunes.
+  ///
+  /// Picking the channel on screen must never re-resolve it. Re-resolving reloads
+  /// the very item that is playing — the picture pauses and re-seeks, and the grid
+  /// loses the focus it had — which is what the owner hit. "Sync to live" is the
+  /// control that exists for deliberately snapping back to the schedule.
+  void _activate() {
+    if (widget.isCurrent) {
+      widget.onClose();
+      return;
+    }
+    widget.onSelect?.call(widget.row.channelId);
+  }
+
   void _applySharedOffset() {
     if (!mounted || !_followsSharedOffset || !_stripController.hasClients) return;
     final target = widget.scrollOffset.value;
@@ -745,7 +766,7 @@ class _GalTvGuideRowTileState extends State<_GalTvGuideRowTile> {
         child: InkWell(
           focusNode: widget.focusNode,
           canRequestFocus: interactive,
-          onTap: interactive ? () => widget.onSelect!(widget.row.channelId) : null,
+          onTap: (interactive || selected) ? _activate : null,
           onFocusChange: (value) {
             if (_focused == value) return;
             setState(() => _focused = value);

@@ -1,5 +1,6 @@
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:material_symbols_icons/symbols.dart';
@@ -65,7 +66,7 @@ void main() {
     await database.close();
   });
 
-  Future<void> pump(WidgetTester tester, {required bool galTv}) async {
+  Future<void> pump(WidgetTester tester, {required bool galTv, bool guideVisible = false}) async {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
@@ -88,7 +89,7 @@ void main() {
                 canNavigateMediaItems: false,
                 isGalTv: galTv,
                 onResyncGalTv: galTv ? () {} : null,
-                galTvGuideVisible: galTv ? ValueNotifier<bool>(false) : null,
+                galTvGuideVisible: galTv ? ValueNotifier<bool>(guideVisible) : null,
                 onToggleGalTvGuide: galTv ? () {} : null,
               ),
             ),
@@ -110,5 +111,31 @@ void main() {
     await pump(tester, galTv: false);
     expect(find.byIcon(Symbols.sync_rounded), findsNothing, reason: 'no channel to sync to');
     expect(find.byIcon(Symbols.tv_rounded), findsNothing, reason: 'no guide to show');
+  });
+
+  testWidgets('Select is left to the guide while the TV Guide layer is up', (tester) async {
+    await pump(tester, galTv: true, guideVisible: true);
+    // The layer's rows are a separate focus branch, so while the grid is still
+    // fetching (or otherwise unfocused) the player surface is what holds focus.
+    // Answering Select there is "raise the chrome onto Play/Pause and toggle
+    // playback" — the owner's "it pauses the clip and the guide loses focus".
+    await tester.pump(const Duration(milliseconds: 50));
+    player.commandLog.clear();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+
+    expect(
+      player.commandLog.where((command) => command == 'play' || command == 'pause'),
+      isEmpty,
+      reason: 'Select belongs to the guide while it is up, never to the player surface',
+    );
+
+    // Drain the chrome's auto-hide timer the key press armed.
+    await tester.pump(const Duration(seconds: 10));
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 10));
   });
 }

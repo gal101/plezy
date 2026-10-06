@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plezy/i18n/strings.g.dart';
 import 'package:plezy/models/galtv/galtv_guide.dart';
@@ -55,6 +56,7 @@ Widget _app({
   required List<GalTvGuideRow> rows,
   required String? currentChannelId,
   void Function(String channelId)? onSelectChannel,
+  VoidCallback? onClose,
   String? channelLogoUrl,
   Future<String?> Function(String ratingKey)? summaryProvider,
 }) => MaterialApp(
@@ -70,7 +72,7 @@ Widget _app({
       summaryProvider: summaryProvider,
       isSwitching: false,
       onSelectChannel: onSelectChannel,
-      onClose: () {},
+      onClose: onClose ?? () {},
       onRetry: () {},
     ),
   ),
@@ -122,6 +124,43 @@ void main() {
     await tester.pump();
 
     expect(tapped, ['comedy']);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('activating the channel already on screen dismisses the layer instead of tuning it', (tester) async {
+    final now = DateTime.now();
+    final tapped = <String>[];
+    var closed = 0;
+    await tester.pumpWidget(
+      _app(
+        rows: [
+          _row('war', '1', 'War Movies', current: true, now: now),
+          _row('comedy', '2', 'Comedy', current: false, now: now),
+        ],
+        currentChannelId: 'war',
+        onSelectChannel: tapped.add,
+        onClose: () => closed++,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // A pointer press on the tuned row: close, never re-tune. Re-resolving the
+    // channel on screen reloads the item that is already playing, which pauses
+    // the picture and re-seeks — "sync to live" is the control for that.
+    await tester.tap(find.text('Watching'));
+    await tester.pump();
+    expect(closed, 1, reason: 'picking the channel already playing just closes the layer');
+    expect(tapped, isEmpty, reason: 'the channel on screen is never re-tuned');
+
+    // The same press from a remote: the tuned row owns focus when the layer
+    // opens, so Enter is exactly this activation.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(closed, 2, reason: 'Enter on the focused tuned row dismisses the layer too');
+    expect(tapped, isEmpty);
 
     await tester.pumpWidget(const SizedBox());
   });

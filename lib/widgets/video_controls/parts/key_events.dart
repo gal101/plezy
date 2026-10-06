@@ -297,7 +297,17 @@ extension _PlexVideoControlsKeyEventMethods on _PlexVideoControlsState {
     // Whether the raised chrome also takes focus is the key's own answer, so
     // mode and focus can never disagree: a remote OK starts a focus session, a
     // physical-keyboard Enter just shows the controls and toggles playback.
-    if (key.isSelectKey && _focusNode.hasPrimaryFocus) {
+    //
+    // **The GalTV guide owns Select while it is up.** Its rows are a separate
+    // focus branch (the layer is a sibling of this controls subtree), so a press
+    // arriving here means the grid has not taken focus yet — the window right
+    // after the layer opens, before the fetched rows exist to be focused.
+    // Answering it as "activate the player surface" toggles playback and drags
+    // focus onto the chrome, which is the owner's "it pauses the clip and the
+    // guide loses focus". Left unconsumed, the press reaches whatever the layer
+    // focused, and a press on the tuned row dismisses the layer (see
+    // `_GalTvGuideRowTile._activate`).
+    if (key.isSelectKey && _focusNode.hasPrimaryFocus && !(widget.galTvGuideVisible?.value ?? false)) {
       return handleOneShotSelect(
         event,
         () => _activatePlayerSurfaceSelect(requestFocus: eventRequestsFocusNavigation(event, focused: _focusNode)),
