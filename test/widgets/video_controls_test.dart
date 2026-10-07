@@ -580,11 +580,15 @@ void main() {
       VoidCallback? exitPlayer,
       VoidCallback? navigateHome,
       bool Function()? isActive,
+      bool Function()? isGuideOpen,
+      VoidCallback? closeGuide,
     }) {
       return PlayerNavigationCoordinator(
         chromeController: chromeController,
         isPromptOpen: isPromptOpen ?? () => false,
         dismissPrompt: dismissPrompt ?? () {},
+        isGuideOpen: isGuideOpen,
+        closeGuide: closeGuide,
         isChromePresented: isChromePresented ?? () => chromeController.controlsPresented,
         exitFullscreenIfActive: exitFullscreenIfActive ?? () async => false,
         physicalEscapeExitsFullscreen: physicalEscapeExitsFullscreenProvider ?? () => physicalEscapeExitsFullscreen,
@@ -628,6 +632,30 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.gameButtonB);
 
       expect(exits, 1);
+    });
+
+    testWidgets('Back closes the GalTV guide before the chrome stage can swallow it', (tester) async {
+      final chromeController = PlayerChromeController();
+      addTearDown(chromeController.dispose);
+      var closes = 0;
+      var exits = 0;
+      final coordinator = coordinatorFor(
+        chromeController,
+        isGuideOpen: () => true,
+        closeGuide: () => closes++,
+        exitPlayer: () => exits++,
+      );
+      await pumpNavigationFocus(tester, coordinator);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.gameButtonB);
+
+      // The guide holds the chrome, so the staged chain's `hideControls` would
+      // consume the press with nothing visible happening — that is the owner's
+      // "pressing back doesn't close the guide, doesn't really do anything" on
+      // the Streamer, where Back arrives as the system back and lands here.
+      expect(closes, 1, reason: 'the guide is the topmost layer, so Back dismisses it');
+      expect(chromeController.controlsVisible, isTrue, reason: 'the press is not the chrome\'s while the layer is up');
+      expect(exits, 0, reason: 'dismissing the layer does not leave the player');
     });
 
     testWidgets('Back exits during pre-first-frame loading even when controls default visible', (tester) async {

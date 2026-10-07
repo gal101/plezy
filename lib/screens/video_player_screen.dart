@@ -1416,6 +1416,11 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
       exitPlayer: () => unawaited(_handleBackButton()),
       navigateHome: _handleHomeButton,
       isActive: () => mounted,
+      // The guide owns Back while it is up, ahead of the chrome chain: it holds
+      // the chrome, so that chain's `hideControls` stage is a no-op behind the
+      // layer and Back would do visibly nothing.
+      isGuideOpen: () => widget.galTv?.guideVisible.value ?? false,
+      closeGuide: _closeGalTvGuide,
     );
 
     _currentMetadata = widget.metadata;

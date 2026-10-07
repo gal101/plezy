@@ -297,6 +297,18 @@ class PlayerNavigationCoordinator {
   final PlayerChromeController chromeController;
   final bool Function() isPromptOpen;
   final VoidCallback dismissPrompt;
+
+  /// The GalTV guide, when this session has one: the topmost layer while it is
+  /// up, exactly like a prompt.
+  ///
+  /// Back must dismiss it *before* the staged chrome chain below runs. The guide
+  /// holds the chrome (`PlayerChromeHold.guide`), so that chain's `hideControls`
+  /// stage is a no-op behind the layer and the press is silently spent — the
+  /// owner's *"pressing back doesn't close the guide, doesn't really do
+  /// anything"* on the Google TV Streamer, where Back arrives as the system back
+  /// and lands here.
+  final bool Function()? isGuideOpen;
+  final VoidCallback? closeGuide;
   final bool Function() isChromePresented;
   final Future<bool> Function() exitFullscreenIfActive;
   final bool Function() _physicalEscapeExitsFullscreen;
@@ -311,6 +323,8 @@ class PlayerNavigationCoordinator {
     required this.chromeController,
     required this.isPromptOpen,
     required this.dismissPrompt,
+    this.isGuideOpen,
+    this.closeGuide,
     required this.isChromePresented,
     required this.exitFullscreenIfActive,
     bool Function()? physicalEscapeExitsFullscreen,
@@ -333,6 +347,13 @@ class PlayerNavigationCoordinator {
     }
     if (isPromptOpen()) {
       dismissPrompt();
+      return;
+    }
+    // The GalTV guide owns Back while it is up — see [isGuideOpen]. Ahead of the
+    // chrome chain on purpose: the layer holds the chrome, so `hideControls`
+    // would consume the press with nothing visible happening.
+    if (isGuideOpen?.call() ?? false) {
+      closeGuide?.call();
       return;
     }
     if (navigationKey == PlayerNavigationKey.back && _exitPlayerBeforeChrome()) {
