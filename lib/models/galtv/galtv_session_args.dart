@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../../models/tunarr/tunarr_channel.dart';
 import '../../services/galtv/galtv_tuner.dart';
 import 'galtv_guide.dart';
 
@@ -29,7 +30,11 @@ class GalTvSessionArgs {
     this.logoHeaders,
     required this.plexRatingKey,
     required this.programId,
+    this.isFiller = false,
+    this.armedNext,
+    this.armedIn,
     this.guideProvider,
+    this.nextProgrammeProvider,
     this.channelResolver,
     this.channelSurfer,
     this.hasSiblingChannel,
@@ -61,29 +66,65 @@ class GalTvSessionArgs {
   /// is how the guide marks "now" and how chaining finds the next item.
   final String programId;
 
+  /// Whether the item being launched is a **filler** (an ad) — `plan.isFiller`.
+  ///
+  /// Seeded into the player's own flag, because nothing else would set it before
+  /// the first boundary: the route is opened with a Plex item and a seek offset,
+  /// not with a plan, so every later assignment comes from a *subsequent* item.
+  /// Without this, tuning a channel that happens to be mid-ad showed no UP NEXT
+  /// button and no ad chrome until the next item — the owner's 2026-10-09 report.
+  final bool isFiller;
+
+  /// The item the launching read named as the one that follows the item being
+  /// opened, and how much of that launched item was left at the read. Together
+  /// they let the route start *armed*: the first boundary of the session plays
+  /// [armedNext] without asking Tunarr anything (a read records the filler it
+  /// predicts, so re-asking is what starves a break — see `GalTvTuneResult`).
+  final GalTvItemStep? armedNext;
+  final Duration? armedIn;
+
   /// Supplies the guide grid. Injected by the GalTV tab so the player never talks
   /// to Tunarr directly and the overlay stays a pure widget.
   final Future<List<GalTvGuideRow>> Function()? guideProvider;
 
-  /// Resolves a channel's *current* airing into a launch target. Injected by the
-  /// tab (which owns Tunarr); the player only receives the finished plan, so it
-  /// still never speaks to Tunarr itself. Null when the channel has nothing
-  /// direct-playable right now.
-  final Future<GalTvTunePlan?> Function(String channelId)? channelResolver;
+  /// Supplies the *next* direct-playable programme, for the "Up next" slate the
+  /// player shows while a break has nothing to play. Injected by the tab, which
+  /// anchors the comparison on Tunarr's `serverTimeMs` — the player must not
+  /// derive "what's next" from the device clock. Null disables the slate; the
+  /// player then simply waits for the next item.
+  ///
+  /// It must come from the **lineup**, not from another `native-playback` read:
+  /// asking that endpoint during a break writes the very history rows that keep
+  /// the break empty. The tab keeps a latched server clock for it.
+  final Future<GalTvUpNext?> Function()? nextProgrammeProvider;
 
-  /// Resolves the neighbouring channel's current airing for a surf: [delta] is
+  /// Resolves a channel's **item sequence** — what is on now and what follows it
+  /// — for launch and for end-of-item chaining. Injected by the tab (which owns
+  /// Tunarr); the player only receives the finished result, so it still never
+  /// speaks to Tunarr itself.
+  ///
+  /// The result carries the *next* step on purpose: reading `native-playback`
+  /// records the filler it predicts for a future instant, so a client that
+  /// re-reads instead of playing what it was handed starves the channel's breaks
+  /// (see `GalTvTuneResult`). Callers hold the arm and play it at the boundary —
+  /// they do not ask again.
+  final Future<GalTvTuneResult?> Function(String channelId)? channelResolver;
+
+  /// Resolves the neighbouring channel's item sequence for a surf: [delta] is
   /// `-1` (previous) or `+1` (next). Injected by the tab alongside
   /// [channelResolver].
-  final Future<GalTvTunePlan?> Function(int delta)? channelSurfer;
+  final Future<GalTvTuneResult?> Function(int delta)? channelSurfer;
 
   /// Whether a neighbour exists in [delta]'s direction. Synchronous because the
   /// transport consults it while building, so a remote never offers a step the
   /// surf would refuse. Injected by the tab from its cached channel list.
   final bool Function(int delta)? hasSiblingChannel;
 
-  /// Reports a successful switch back to the tab so it can persist the channel
-  /// and keep its idle state in sync.
-  final ValueChanged<GalTvTunePlan>? onChannelChanged;
+  /// Reports the channel the session is now following back to the tab so it can
+  /// persist it and keep its idle state in sync. [programId] is the item on air
+  /// when there is one — null while a gap is being followed, which leaves that
+  /// channel's guide cell unmarked rather than pointing at a stale item.
+  final void Function(TunarrChannel channel, String? programId)? onChannelChanged;
 
   /// Called when the item finishes playing naturally, *before* the player tears
   /// down. The tab uses it to distinguish "programme ended, re-tune" from "user
@@ -96,6 +137,22 @@ class GalTvSessionArgs {
   /// `Stack` share one source of truth.
   final ValueNotifier<bool> guideVisible = ValueNotifier<bool>(false);
 
+  /// What the break slate is showing, or null when no slate is up.
+  ///
+  /// Owned here for the same reason [guideVisible] is: the player writes it while
+  /// it holds the route through an unplayable break, the overlay in the
+  /// screen-level `Stack` reads it, and neither widget owns the other.
+  final ValueNotifier<GalTvUpNext?> upNext = ValueNotifier<GalTvUpNext?>(null);
+
+  /// The channel's next **programme**, kept current while a filler (an ad) plays,
+  /// so the compact hint above the UP NEXT button always has something to show.
+  ///
+  /// Deliberately separate from [upNext], which is the **slate's** state: a
+  /// non-null value there mounts the full-screen layer. Raising that layer is the
+  /// viewer's decision — a slate appearing over an ad on its own is the jump scare
+  /// the slate's own design rules out — so the hint cannot reuse it.
+  final ValueNotifier<GalTvUpNext?> nextUp = ValueNotifier<GalTvUpNext?>(null);
+
   bool get hasGuide => guideProvider != null;
 
   /// Whether the guide can tune a different channel. A session without a
@@ -106,5 +163,9 @@ class GalTvSessionArgs {
   /// i.e. a continuation segment rather than a new programme.
   bool isSameItem(String? ratingKey) => ratingKey != null && ratingKey == plexRatingKey;
 
-  void dispose() => guideVisible.dispose();
+  void dispose() {
+    guideVisible.dispose();
+    upNext.dispose();
+    nextUp.dispose();
+  }
 }

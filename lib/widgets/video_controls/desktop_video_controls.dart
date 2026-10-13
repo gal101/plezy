@@ -122,12 +122,29 @@ class DesktopVideoControls extends StatefulWidget {
   /// they wear channel glyphs and channel tooltips.
   final bool isGalTv;
 
+  /// A GalTV **filler** (an ad) is playing: no seek affordance of any kind.
+  ///
+  /// The ad is not something the viewer chose to watch and it has a fixed slot to
+  /// fill, so the ±10 buttons come off the row and the timeline stops accepting
+  /// drags. Everything else the GalTV chrome offers — play/pause, the channel
+  /// steps, the guide and UP NEXT — stays. See [TrackChapterControls.galTvOnFiller]
+  /// for the two buttons that go with them.
+  final bool galTvOnFiller;
+
   /// The tuned GalTV channel's logo, shown beside the title. Null outside GalTV
   /// and for a channel with no icon.
   final String? channelLogoUrl;
 
   /// Headers the logo request needs — the gate authenticates images too.
   final Map<String, String>? logoHeaders;
+
+  /// The affordance that sits directly **above** the transport row — the chrome's
+  /// skip-marker / GalTV "UP NEXT" slot — used as the UP target when the timeline
+  /// cannot hold focus (see [_timelineInteractive]).
+  ///
+  /// Null when the host has no such slot mounted; UP then stays on the row rather
+  /// than moving onto a control that is not there.
+  final FocusNode? focusUpTarget;
 
   const DesktopVideoControls({
     super.key,
@@ -177,6 +194,8 @@ class DesktopVideoControls extends StatefulWidget {
     this.onSeekCompleted,
     this.isTranscoding = false,
     this.isGalTv = false,
+    this.galTvOnFiller = false,
+    this.focusUpTarget,
     this.channelLogoUrl,
     this.logoHeaders,
   });
@@ -188,6 +207,15 @@ class DesktopVideoControls extends StatefulWidget {
 class DesktopVideoControlsState extends State<DesktopVideoControls> {
   TrackControlsState get _trackControlsState => widget.trackControlsState;
   bool get _canControl => _trackControlsState.canControl;
+
+  /// Whether the seek bar can be used right now — the same condition its own
+  /// `enabled` prop takes (the bottom controls only exist behind
+  /// `FirstFrameGuard`, so there is no frame term to repeat here).
+  ///
+  /// Kept as one question because "may this hold the remote?" and "can the viewer
+  /// do anything once it does?" must never disagree: a focused control with no key
+  /// handler swallows the D-pad.
+  bool get _timelineInteractive => _canControl && !widget.galTvOnFiller;
   bool get _isLive => _trackControlsState.isLive;
 
   late final FocusNode _prevItemFocusNode;
@@ -330,6 +358,20 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
   /// on the chrome; internal hand-offs (the skip-marker button's
   /// ArrowDown, an item swap) are already inside a focus session.
   void requestPlayPauseFocus() {
+    // During an ad there is no play/pause button to focus, and the D-pad has to
+    // land somewhere or the chrome becomes unreachable. Fall back to the first
+    // control that is mounted — the channel steps, which are the way out of the
+    // ad — mirroring what `navigateFromTrackToVolume` does on TV.
+    if (_playPauseFocusNode.context == null) {
+      for (final node in _buttonFocusNodes) {
+        if (node.context != null) {
+          node.requestFocus();
+          widget.onFocusActivity?.call();
+          return;
+        }
+      }
+      return;
+    }
     _playPauseFocusNode.requestFocus();
   }
 
@@ -464,7 +506,17 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
     }
 
     if (key == LogicalKeyboardKey.arrowUp) {
-      _timelineFocusNode.requestFocus();
+      // UP goes to whatever above the row can actually be *used*. A disabled
+      // `TimelineSlider` keeps its focus node but drops its key handler, so
+      // focusing it stopped the remote dead: every arrow was consumed by the
+      // seek shortcuts (which are refused in an ad), DOWN never came back, and
+      // only Back got out — the owner's TV report, 2026-10-09. The slot above the
+      // row (GalTV's UP NEXT) is the honest target there.
+      if (_timelineInteractive) {
+        _timelineFocusNode.requestFocus();
+      } else if (widget.focusUpTarget?.context != null) {
+        widget.focusUpTarget!.requestFocus();
+      }
       widget.onFocusActivity?.call();
       return KeyEventResult.handled;
     }
@@ -760,7 +812,9 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
               focusNode: _timelineFocusNode,
               onKeyEvent: _handleTimelineKeyEvent,
               onFocusChange: _onFocusChange,
-              enabled: canInteract,
+              // An ad cannot be scrubbed: `TimelineSlider` drops its drag
+              // recognizers, its key handler and its cursor when disabled.
+              enabled: canInteract && !widget.galTvOnFiller,
               thumbnailDataBuilder: widget.thumbnailDataBuilder,
               showKeyRepeatThumbnail: _showKeyRepeatThumbnail,
               previewPosition: _timelineSeek.pendingPosition,
@@ -784,27 +838,38 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
                       tooltip: widget.isGalTv ? t.galtv.previousChannel : null,
                     ),
                   ),
-                  // Previous chapter
-                  StreamBuilder<String?>(
-                    stream: _previousChapterLabelStream,
-                    initialData: _getPreviousChapterLabel(widget.player.state.position),
-                    builder: (context, prevLabelSnapshot) {
-                      return Opacity(
-                        opacity: _canControl ? 1.0 : 0.5,
-                        child: _buildFocusableButton(
-                          focusNode: _prevChapterFocusNode,
-                          index: 1,
-                          icon: Symbols.fast_rewind_rounded,
-                          color: widget.chapters.isNotEmpty && _canControl ? Colors.white : Colors.white54,
-                          onPressed: _canControl && widget.chapters.isNotEmpty ? widget.onSeekToPreviousChapter : null,
-                          semanticLabel: t.videoControls.previousChapterButton,
-                          tooltip: prevLabelSnapshot.data,
-                        ),
-                      );
-                    },
-                  ),
+                  // Previous chapter. Hidden in a GalTV session: chapter marks
+                  // are a disc affordance, and on a live channel the transport's
+                  // left/right pair is the *channel* (see the glyph swap above),
+                  // so a second pair of chevrons that only ever greys out is
+                  // clutter. Every other session keeps it.
+                  if (!widget.isGalTv)
+                    StreamBuilder<String?>(
+                      stream: _previousChapterLabelStream,
+                      initialData: _getPreviousChapterLabel(widget.player.state.position),
+                      builder: (context, prevLabelSnapshot) {
+                        return Opacity(
+                          opacity: _canControl ? 1.0 : 0.5,
+                          child: _buildFocusableButton(
+                            focusNode: _prevChapterFocusNode,
+                            index: 1,
+                            icon: Symbols.fast_rewind_rounded,
+                            color: widget.chapters.isNotEmpty && _canControl ? Colors.white : Colors.white54,
+                            onPressed: _canControl && widget.chapters.isNotEmpty
+                                ? widget.onSeekToPreviousChapter
+                                : null,
+                            semanticLabel: t.videoControls.previousChapterButton,
+                            tooltip: prevLabelSnapshot.data,
+                          ),
+                        );
+                      },
+                    ),
                 ],
-                if (!_isLive || widget.captureBuffer != null) ...[
+                // An ad has no seek pair. The index list is fixed and
+                // `_handleButtonKeyEvent` already skips unmounted slots (the same
+                // reason the chapter buttons needed no renumbering), so nothing
+                // below this row shifts.
+                if ((!_isLive || widget.captureBuffer != null) && !widget.galTvOnFiller) ...[
                   // Skip backward
                   Opacity(
                     opacity: _canControl ? 1.0 : 0.5,
@@ -817,24 +882,27 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
                     ),
                   ),
                 ],
-                // Play/Pause
-                Opacity(
-                  opacity: _canControl ? 1.0 : 0.5,
-                  child: PlayPauseStreamBuilder(
-                    player: widget.player,
-                    builder: (context, isPlaying) {
-                      return _buildFocusableButton(
-                        focusNode: _playPauseFocusNode,
-                        index: 3,
-                        icon: isPlaying ? Symbols.pause_rounded : Symbols.play_arrow_rounded,
-                        iconSize: 32,
-                        onPressed: _canControl ? widget.onPlayPause : null,
-                        semanticLabel: isPlaying ? t.videoControls.pauseButton : t.videoControls.playButton,
-                      );
-                    },
+                // Play/Pause — absent during an ad, which the viewer may not stop.
+                // The channel steps either side of it stay, so the row is still a
+                // way out of the ad.
+                if (!widget.galTvOnFiller)
+                  Opacity(
+                    opacity: _canControl ? 1.0 : 0.5,
+                    child: PlayPauseStreamBuilder(
+                      player: widget.player,
+                      builder: (context, isPlaying) {
+                        return _buildFocusableButton(
+                          focusNode: _playPauseFocusNode,
+                          index: 3,
+                          icon: isPlaying ? Symbols.pause_rounded : Symbols.play_arrow_rounded,
+                          iconSize: 32,
+                          onPressed: _canControl ? widget.onPlayPause : null,
+                          semanticLabel: isPlaying ? t.videoControls.pauseButton : t.videoControls.playButton,
+                        );
+                      },
+                    ),
                   ),
-                ),
-                if (!_isLive || widget.captureBuffer != null) ...[
+                if ((!_isLive || widget.captureBuffer != null) && !widget.galTvOnFiller) ...[
                   // Skip forward
                   Opacity(
                     opacity: _canControl ? 1.0 : 0.5,
@@ -859,25 +927,27 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
                   ),
                 ],
                 if (!_isLive) ...[
-                  // Next chapter
-                  StreamBuilder<String?>(
-                    stream: _nextChapterLabelStream,
-                    initialData: _getNextChapterLabel(widget.player.state.position),
-                    builder: (context, nextLabelSnapshot) {
-                      return Opacity(
-                        opacity: _canControl ? 1.0 : 0.5,
-                        child: _buildFocusableButton(
-                          focusNode: _nextChapterFocusNode,
-                          index: 5,
-                          icon: Symbols.fast_forward_rounded,
-                          color: widget.chapters.isNotEmpty && _canControl ? Colors.white : Colors.white54,
-                          onPressed: _canControl && widget.chapters.isNotEmpty ? widget.onSeekToNextChapter : null,
-                          semanticLabel: t.videoControls.nextChapterButton,
-                          tooltip: nextLabelSnapshot.data,
-                        ),
-                      );
-                    },
-                  ),
+                  // Next chapter. Hidden in a GalTV session — see the previous
+                  // chapter button above.
+                  if (!widget.isGalTv)
+                    StreamBuilder<String?>(
+                      stream: _nextChapterLabelStream,
+                      initialData: _getNextChapterLabel(widget.player.state.position),
+                      builder: (context, nextLabelSnapshot) {
+                        return Opacity(
+                          opacity: _canControl ? 1.0 : 0.5,
+                          child: _buildFocusableButton(
+                            focusNode: _nextChapterFocusNode,
+                            index: 5,
+                            icon: Symbols.fast_forward_rounded,
+                            color: widget.chapters.isNotEmpty && _canControl ? Colors.white : Colors.white54,
+                            onPressed: _canControl && widget.chapters.isNotEmpty ? widget.onSeekToNextChapter : null,
+                            semanticLabel: t.videoControls.nextChapterButton,
+                            tooltip: nextLabelSnapshot.data,
+                          ),
+                        );
+                      },
+                    ),
                   // Next item
                   Opacity(
                     opacity: _canControl ? 1.0 : 0.5,
@@ -941,6 +1011,7 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
                     }
                   },
                   hideChaptersAndQueue: widget.useDpadNavigation && _hasStripContent,
+                  galTvOnFiller: widget.galTvOnFiller,
                 ),
               ],
             ),

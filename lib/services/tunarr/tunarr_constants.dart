@@ -39,8 +39,16 @@ abstract final class TunarrConstants {
   /// the gate allows through.
   static bool isGatewayPathAllowed(String path) => gatewayPathPrefixes.any(path.startsWith);
 
+  /// The gate's **own** favourites pair (`GET`/`PUT`), i.e. per-Plex-user starred
+  /// GalTV channels — see `auth-gate/favorites.mjs`.
+  ///
+  /// Deliberately absent from [gatewayPathPrefixes]: it is served by the gate and
+  /// never proxied, so no Tunarr path gains write access.
+  static const String favoritesPath = '/galtv/favorites';
+
   /// Gate `error` codes carried in the JSON body of a rejection.
   static const String errorMissingPlexToken = 'missing-plex-token';
+  static const String errorPathNotAllowed = 'path-not-allowed';
   static const String errorPlex401 = 'plex-401';
   static const String errorNoLibraries = 'no-libraries';
   static const String errorPlex503 = 'plex-503';

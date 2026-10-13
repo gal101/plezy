@@ -569,6 +569,17 @@ class SettingsService extends BaseSharedPreferencesService {
   /// itself visible, so signing out of Tunarr (or switching [enableGaltv] off)
   /// brings Live TV back without touching this.
   static const galtvOverridesLiveTv = BoolPref('galtv_overrides_live_tv', defaultValue: true);
+  /// Hide ads on GalTV: filler items are never played.
+  ///
+  /// Filler is everything Tunarr draws to fill a `flex` — an `Other Videos` item
+  /// the channel does not schedule itself (`galTvProgramIsFiller`), which is the
+  /// same rule the player's ad chrome and UP NEXT ride on. With this on, a break
+  /// is **held out on the slate** rather than filled: the ad's own length is
+  /// waited instead of played, so the next programme still starts at its
+  /// scheduled second. Off by default — filling the breaks is the point of the
+  /// filler work, so hiding them is an opt-out a viewer asks for, not a default
+  /// anyone is handed.
+  static const galtvHideAds = BoolPref('galtv_hide_ads');
   /// Last GalTV channel the user watched, so opening the tab re-tunes where they
   /// left off. Empty means "never tuned" — the screen then falls back to the
   /// lowest-numbered channel. Device-local: reset by "Reset All Settings", never
@@ -580,9 +591,26 @@ class SettingsService extends BaseSharedPreferencesService {
   /// renumbering or re-iconing a channel leaves the list intact — while deleting
   /// a channel and creating another mints a *new* id, so the old entry simply
   /// stops resolving and stops being shown (`GalTvFavorites.visible`). Reads and
-  /// writes go through `lib/services/galtv/galtv_favorites.dart`. Device-local,
-  /// like [galtvLastChannelId], and never carried in a settings export.
+  /// writes go through `lib/services/galtv/galtv_favorites.dart`.
+  ///
+  /// **This is a cache, not the store.** The list belongs to the Plex account:
+  /// `GalTvFavoritesSync` keeps it in step with the gate (`GET`/`PUT
+  /// /galtv/favorites`), so this pref is both what a star writes first and what the
+  /// picker reads when the gate is unreachable. Device-local, like
+  /// [galtvLastChannelId], and never carried in a settings export.
   static const galtvFavoriteChannelIds = StringListPref('galtv_favorite_channel_ids');
+  /// The Plex **user id** the cached list in [galtvFavoriteChannelIds] belongs to.
+  ///
+  /// The gate keys favourites by the caller's Plex identity, but one device holds
+  /// one cache across profiles that can map to different Plex users. Without this
+  /// marker a fresh sign-in would read the other user's cached list as "mine" and
+  /// push it up (`GalTvFavoritesSync`); the marker gates that push, so a cache
+  /// claimed by somebody else is only ever *replaced from* the server. Empty means
+  /// "belongs to nobody yet", which the first sync may claim. Device-local, never
+  /// exported, and meaningful only alongside [galtvFavoriteChannelIds] — the two
+  /// travel together (neither is reset-scoped, so a reset cannot desynchronise
+  /// them and hand one viewer the other's list).
+  static const galtvFavoritesCacheOwner = StringPref('galtv_favorites_cache_owner');
   // Linux native video plane only. Defaults to the compositor: photographed on a
   // 400-nit HDR output against a PQ chart, the compositor keeps 400 -> 1000 nits
   // monotonic and separated while the player leg flattens it. The player path
@@ -1393,6 +1421,7 @@ class SettingsService extends BaseSharedPreferencesService {
     enableHDR,
     enableGaltv,
     galtvOverridesLiveTv,
+    galtvHideAds,
     hdrToneMapping,
     viewMode,
     seekTimeSmall,

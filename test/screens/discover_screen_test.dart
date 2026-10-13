@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:drift/native.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:material_symbols_icons/symbols.dart';
@@ -6,6 +7,8 @@ import 'package:plezy/media/ids.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:plezy/connection/connection.dart';
 import 'package:plezy/focus/input_mode_tracker.dart';
 import 'package:plezy/connection/connection_registry.dart';
@@ -31,13 +34,18 @@ import 'package:plezy/providers/companion_remote_provider.dart';
 import 'package:plezy/providers/discover_provider.dart';
 import 'package:plezy/providers/hidden_libraries_provider.dart';
 import 'package:plezy/providers/libraries_provider.dart';
+import 'package:plezy/models/tunarr/tunarr_session.dart';
 import 'package:plezy/providers/multi_server_provider.dart';
+import 'package:plezy/providers/tunarr_account_provider.dart';
 import 'package:plezy/screens/discover_screen.dart';
 import 'package:plezy/screens/main_screen.dart';
 import 'package:plezy/services/data_aggregation_service.dart';
 import 'package:plezy/services/multi_server_manager.dart';
 import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/services/storage_service.dart';
+import 'package:plezy/services/tunarr/tunarr_client.dart';
+import 'package:plezy/services/tunarr/tunarr_http_client.dart';
+import 'package:plezy/services/tunarr/tunarr_session_store.dart';
 import 'package:plezy/theme/mono_theme.dart';
 import 'package:plezy/utils/layout_constants.dart';
 import 'package:plezy/utils/platform_detector.dart';
@@ -45,6 +53,7 @@ import 'package:plezy/watch_together/watch_together.dart';
 import 'package:plezy/widgets/side_navigation_rail.dart';
 import 'package:plezy/widgets/tv_browse_rail.dart';
 import 'package:plezy/widgets/system_clock.dart';
+import 'package:plezy/widgets/media_progress_bar.dart';
 import 'package:plezy/widgets/tv_spotlight_background.dart';
 import 'package:provider/provider.dart';
 
@@ -834,6 +843,205 @@ void main() {
       reason: 'the user navigated on; do not yank focus',
     );
   });
+
+  testWidgets('Home draws the GalTV shelves, and a card opens the shell\'s GalTV tab on that channel', (tester) async {
+    final settings = await SettingsService.getInstance();
+    await settings.write(SettingsService.enableGaltv, true);
+    await settings.write(SettingsService.galtvFavoriteChannelIds, ['ch-2']);
+
+    final tunarr = _galtvTestTunarrAccount();
+    addTearDown(tunarr.dispose);
+    await tunarr.adoptSession(_galtvTestSession);
+
+    final opened = <String>[];
+    await _pumpDiscoverShell(
+      tester,
+      isTv: false,
+      hubs: [_galtvTestBackendHub()],
+      continueWatching: [
+        testMediaItem(id: 'movie_2', backend: MediaBackend.plex, kind: MediaKind.movie, title: 'Resumed Film'),
+      ],
+      viewHeight: 2400,
+      tunarrAccount: tunarr,
+      onOpenGalTvChannel: opened.add,
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+
+    // Two shelves: every channel, then the one favourite.
+    expect(find.text('Live now'), findsOneWidget);
+    expect(find.text('Favourite channels'), findsOneWidget);
+    // The airing programme is the card's title; the channel is its caption.
+    expect(find.text('Iron Man'), findsOneWidget);
+    expect(find.text('CH 1 · Military History'), findsOneWidget);
+    // How far into the *playing* programme the channel is — drawn by the same
+    // item-progress bar Continue Watching uses. Only the playing card gets one.
+    expect(find.byType(MediaProgressBar), findsOneWidget);
+
+    // …and the channel in a gap shows what is coming (on both shelves, since it
+    // is the favourite too), captioned with when it starts.
+    expect(find.text('Knives Out'), findsNWidgets(2));
+    expect(find.textContaining('Starts at'), findsNWidgets(2));
+    expect(
+      find.byType(MediaProgressBar),
+      findsOneWidget,
+      reason: 'a card showing what comes next has no elapsed time to draw',
+    );
+
+    // The owner's order, top to bottom: Continue Watching, then the favourites
+    // row he curated, then the all-channels row.
+    final continueTop = tester.getTopLeft(find.text('Continue Watching')).dy;
+    final favoritesTop = tester.getTopLeft(find.text('Favourite channels')).dy;
+    final liveTop = tester.getTopLeft(find.text('Live now')).dy;
+    expect(continueTop, lessThan(favoritesTop));
+    expect(favoritesTop, lessThan(liveTop));
+
+    await tester.tap(find.text('Iron Man'));
+    await tester.pump();
+    expect(opened, ['ch-1']);
+  });
+
+  /// The shipped bug: `TunarrAccountProvider` loads its session from the
+  /// profile's store *asynchronously*, so Home's first shelf attempt always ran
+  /// against `client == null`. Nothing asked again, and the shelves never
+  /// appeared until the tab was switched away and back. This pins the subscribe.
+  testWidgets('the shelves appear when the Tunarr session binds after Home has drawn', (tester) async {
+    final settings = await SettingsService.getInstance();
+    await settings.write(SettingsService.enableGaltv, true);
+
+    // The session is already in the store, but the provider has not read it yet
+    // — exactly the state Home mounts in.
+    final tunarr = _galtvTestTunarrAccount(store: _InMemoryTunarrSessionStore()..session = _galtvTestSession);
+    addTearDown(tunarr.dispose);
+
+    await _pumpDiscoverShell(
+      tester,
+      isTv: false,
+      hubs: [_galtvTestBackendHub()],
+      tunarrAccount: tunarr,
+      onOpenGalTvChannel: (_) {},
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Live now'), findsNothing, reason: 'the session is not bound yet');
+
+    // The profile binder's own call, which reads the stored session and lands
+    // after Home has already drawn.
+    await tunarr.onActiveProfileChanged(null);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('Live now'), findsOneWidget);
+  });
+}
+
+const TunarrSession _galtvTestSession = TunarrSession(
+  baseUrl: 'https://gate.example.com',
+  granted: true,
+  username: 'owner',
+  email: '',
+  plexId: 1,
+  sections: [],
+  createdAt: 0,
+);
+
+/// A session store that never touches preferences.
+///
+/// [TunarrSessionStore] funnels every read and write through a **static**
+/// `SerialFutureQueue`, so a write from a previous test leaves its tail chained
+/// in *that* test's fake-async zone — and the next test's await on the queue
+/// never completes. Keeping the persistence out of these widget tests removes
+/// the cross-test coupling entirely; the store itself has its own tests.
+class _InMemoryTunarrSessionStore extends TunarrSessionStore {
+  TunarrSession? session;
+
+  @override
+  Future<TunarrSession?> load(String userUuid) async => session;
+
+  @override
+  Future<void> save(String userUuid, TunarrSession value) async => session = value;
+
+  @override
+  Future<void> clear(String userUuid) async => session = null;
+}
+
+MediaHub _galtvTestBackendHub() => MediaHub(
+  id: 'hub_1',
+  title: 'Recommended',
+  type: 'movie',
+  items: [testMediaItem(id: 'movie_1', backend: MediaBackend.plex, kind: MediaKind.movie, title: 'Movie 1')],
+  size: 1,
+);
+
+/// A Tunarr account answering the two reads the Home shelves make, with a slot
+/// covering "now" on `ch-1` and a flex gap on `ch-2`.
+///
+/// The airing programme deliberately carries **no** `externalId`: the card must
+/// name what is on without asking Plex for artwork, so these tests never touch
+/// the image pipeline.
+TunarrAccountProvider _galtvTestTunarrAccount({_InMemoryTunarrSessionStore? store}) {
+  final now = DateTime.now();
+  http.Response json(Object body) =>
+      http.Response(jsonEncode(body), 200, headers: {'content-type': 'application/json'});
+  return TunarrAccountProvider(
+    store: store ?? _InMemoryTunarrSessionStore(),
+    clientFactory: (_) => TunarrClient(
+      http: TunarrHttpClient(
+        baseUrl: 'https://gate.example.com',
+        plexToken: 'plex-token',
+        httpClient: MockClient((request) async {
+          switch (request.url.path) {
+            case '/api/channels':
+              return json([
+                {'id': 'ch-1', 'number': 1, 'name': 'Military History', 'programCount': 2},
+                {'id': 'ch-2', 'number': 2, 'name': 'COMEDY play', 'programCount': 1},
+              ]);
+            case '/api/channels/all/lineups':
+              return json([
+                {
+                  'id': 'ch-1',
+                  'number': 1,
+                  'name': 'Military History',
+                  'programs': [
+                    {
+                      'id': 's1',
+                      'start': now.subtract(const Duration(minutes: 10)).millisecondsSinceEpoch,
+                      'stop': now.add(const Duration(minutes: 50)).millisecondsSinceEpoch,
+                      'duration': 3600000,
+                      'type': 'content',
+                      'program': {'title': 'Iron Man'},
+                    },
+                  ],
+                },
+                {
+                  'id': 'ch-2',
+                  'number': 2,
+                  'name': 'COMEDY play',
+                  // A gap with a programme behind it: the card looks ahead and
+                  // says when that programme starts.
+                  'programs': [
+                    {
+                      'id': 's2',
+                      'start': now.subtract(const Duration(minutes: 2)).millisecondsSinceEpoch,
+                      'stop': now.add(const Duration(minutes: 5)).millisecondsSinceEpoch,
+                      'duration': 420000,
+                      'type': 'flex',
+                    },
+                    {
+                      'id': 's3',
+                      'start': now.add(const Duration(minutes: 5)).millisecondsSinceEpoch,
+                      'stop': now.add(const Duration(hours: 1)).millisecondsSinceEpoch,
+                      'duration': 3300000,
+                      'type': 'content',
+                      'program': {'title': 'Knives Out'},
+                    },
+                  ],
+                },
+              ]);
+          }
+          return http.Response('not found', 404);
+        }),
+      ),
+    ),
+  );
 }
 
 class _GatedDiscover {
@@ -973,17 +1181,28 @@ Future<_GatedDiscover> _pumpGatedDiscover(WidgetTester tester) async {
 
 /// Mounts [DiscoverScreen] in the smallest graph both layout branches need, so
 /// one test can compare the TV and non-TV chrome without rebuilding it twice.
-Future<void> _pumpDiscoverShell(WidgetTester tester, {required bool isTv}) async {
+Future<void> _pumpDiscoverShell(
+  WidgetTester tester, {
+  required bool isTv,
+  List<MediaHub> hubs = const [],
+  List<MediaItem> continueWatching = const [],
+  /// Tall enough that every row is laid out: the Home list is a lazily-built
+  /// `CustomScrollView`, so a row below the fold is not merely off-screen — it is
+  /// never built, and `find` cannot see it.
+  double viewHeight = 720,
+  TunarrAccountProvider? tunarrAccount,
+  void Function(String channelId)? onOpenGalTvChannel,
+}) async {
   TvDetectionService.debugSetAppleTVOverride(isTv);
   await SettingsService.getInstance();
   tester.view.devicePixelRatio = 1.0;
-  tester.view.physicalSize = const Size(1280, 720);
+  tester.view.physicalSize = Size(1280, viewHeight);
   addTearDown(() {
     tester.view.resetDevicePixelRatio();
     tester.view.resetPhysicalSize();
   });
 
-  final client = _FakeMediaServerClient(hubs: const []);
+  final client = _FakeMediaServerClient(hubs: hubs, continueWatching: continueWatching);
   final manager = MultiServerManager()..debugRegisterClientForTesting(client);
   final multiServerProvider = testMultiServerProvider(manager);
   final hiddenLibrariesProvider = HiddenLibrariesProvider();
@@ -1039,6 +1258,7 @@ Future<void> _pumpDiscoverShell(WidgetTester tester, {required bool isTv}) async
           ChangeNotifierProvider<CompanionRemoteProvider>.value(value: companionRemoteProvider),
           ChangeNotifierProvider<ActiveProfileProvider>.value(value: activeProfileProvider),
           ChangeNotifierProvider<DiscoverProvider>.value(value: discoverProvider),
+          if (tunarrAccount != null) ChangeNotifierProvider<TunarrAccountProvider>.value(value: tunarrAccount),
         ],
         child: InputModeTracker(
           child: MaterialApp(
@@ -1050,6 +1270,7 @@ Future<void> _pumpDiscoverShell(WidgetTester tester, {required bool isTv}) async
               foregroundLeft: 0,
               foregroundWidth: 1280,
               viewportWidth: 1280,
+              openGalTvChannel: onOpenGalTvChannel,
               child: const DiscoverScreen(),
             ),
           ),

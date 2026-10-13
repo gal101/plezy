@@ -44,6 +44,14 @@ class TrackChapterControls extends StatelessWidget {
   /// Whether to hide the chapters and queue buttons (mobile uses content strip instead)
   final bool hideChaptersAndQueue;
 
+  /// A GalTV **filler** (an ad) is on screen.
+  ///
+  /// An ad is not the viewer's playback session: there is nothing to tune, no
+  /// track to pick and no sync offset worth setting, so the settings and
+  /// audio-&-subtitles buttons come off the row for its duration. The player
+  /// keeps its own play/pause, channel steps and guide.
+  final bool galTvOnFiller;
+
   const TrackChapterControls({
     super.key,
     required this.player,
@@ -58,6 +66,7 @@ class TrackChapterControls extends StatelessWidget {
     this.onNavigateUp,
     this.onNavigateDown,
     this.hideChaptersAndQueue = false,
+    this.galTvOnFiller = false,
   });
 
   KeyEventResult _handleButtonKeyEvent(FocusNode _, KeyEvent event, int index, int totalButtons) {
@@ -143,45 +152,49 @@ class TrackChapterControls extends StatelessWidget {
         final buttons = <Widget>[];
         int buttonIndex = 0;
 
-        buttons.add(
-          ListenableBuilder(
-            listenable: SleepTimerService(),
-            builder: (context, _) {
-              final sleepTimer = SleepTimerService();
-              final shaderService = state.shaderService;
-              final isShaderActive =
-                  shaderService != null && shaderService.isSupported && shaderService.currentPreset.isEnabled;
-              final isZoomActive = (state.videoZoomScale - 1.0).abs() > 0.0001;
-              final isActive =
-                  sleepTimer.isActive ||
-                  state.audioSyncOffset != 0 ||
-                  state.subtitleSyncOffset != 0 ||
-                  isShaderActive ||
-                  isZoomActive;
-              return _buildTrackButton(
-                buttonIndex: 0,
-                icon: Symbols.tune_rounded,
-                isActive: isActive,
-                checked: isActive,
-                tooltip: t.videoControls.settingsButton,
-                semanticValue: _versionQualitySemanticValue(),
-                semanticLabel: t.videoControls.settingsButton,
-                buttons: buttons,
-                onPressed: () {
-                  state.onCancelAutoHide?.call();
-                  OverlaySheetController.of(context)
-                      .show(
-                        builder: (_) => VideoSettingsSheet(player: player, trackControlsState: state),
-                      )
-                      .whenComplete(() => state.onStartAutoHide?.call());
-                },
-              );
-            },
-          ),
-        );
-        buttonIndex++;
+        // An ad gets no settings and no track picker: both are
+        // per-playback-session controls, and the viewer is watching the channel,
+        // not the ad. Nothing at all is added here, so the `buttonIndex` values
+        // stay contiguous with the list the buttons are actually in.
+        if (!galTvOnFiller) {
+          buttons.add(
+            ListenableBuilder(
+              listenable: SleepTimerService(),
+              builder: (context, _) {
+                final sleepTimer = SleepTimerService();
+                final shaderService = state.shaderService;
+                final isShaderActive =
+                    shaderService != null && shaderService.isSupported && shaderService.currentPreset.isEnabled;
+                final isZoomActive = (state.videoZoomScale - 1.0).abs() > 0.0001;
+                final isActive =
+                    sleepTimer.isActive ||
+                    state.audioSyncOffset != 0 ||
+                    state.subtitleSyncOffset != 0 ||
+                    isShaderActive ||
+                    isZoomActive;
+                return _buildTrackButton(
+                  buttonIndex: 0,
+                  icon: Symbols.tune_rounded,
+                  isActive: isActive,
+                  checked: isActive,
+                  tooltip: t.videoControls.settingsButton,
+                  semanticValue: _versionQualitySemanticValue(),
+                  semanticLabel: t.videoControls.settingsButton,
+                  buttons: buttons,
+                  onPressed: () {
+                    state.onCancelAutoHide?.call();
+                    OverlaySheetController.of(context)
+                        .show(
+                          builder: (_) => VideoSettingsSheet(player: player, trackControlsState: state),
+                        )
+                        .whenComplete(() => state.onStartAutoHide?.call());
+                  },
+                );
+              },
+            ),
+          );
+          buttonIndex++;
 
-        {
           final currentIndex = buttonIndex;
           buttons.add(
             StreamBuilder<TrackSelection>(

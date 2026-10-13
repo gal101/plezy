@@ -11,6 +11,7 @@ import 'settings_binding_owner.dart';
 import 'settings_service.dart';
 import 'shortcut_action.dart';
 import '../utils/platform_detector.dart';
+import '../utils/app_logger.dart';
 import '../utils/player_utils.dart';
 
 class HotkeyConflictException implements Exception {
@@ -267,6 +268,22 @@ class KeyboardShortcutsService extends ChangeNotifier {
     /// Whether this surface is a GalTV session that can switch channels. Gates
     /// the remote's CH+/CH− keys, which otherwise fall through to nothing.
     bool canSwitchGalTvChannel = false,
+
+    /// Whether seeking is allowed at all here.
+    ///
+    /// False while a GalTV **filler** (an ad) is on screen. Every hotkey with
+    /// [ShortcutAction.seeksPlayback] is then **consumed without acting** — an
+    /// ad's chrome hides its seek buttons and locks its bar, and these bindings
+    /// are the remaining way in. Consuming rather than ignoring matters: the key
+    /// must not fall through to whatever is under the player route.
+    bool canSeek = true,
+
+    /// Whether the viewer may start and stop playback here.
+    ///
+    /// False while a GalTV **filler** (an ad) is on screen — an ad runs to its
+    /// end, so [ShortcutAction.playPause] is consumed without acting, exactly as
+    /// the seek actions are.
+    bool canTogglePlayback = true,
     VoidCallback? onPlayPause,
     VoidCallback? onToggleGalTvGuide,
 
@@ -341,7 +358,11 @@ class KeyboardShortcutsService extends ChangeNotifier {
           (action.requiresPlayback && !canControlPlayback) ||
           (action.requiresMediaNavigation && !canNavigateMediaItems) ||
           (action.requiresGalTvGuide && !canToggleGalTvGuide) ||
-          (action.requiresGalTvChannel && !canSwitchGalTvChannel)) {
+          (action.requiresGalTvChannel && !canSwitchGalTvChannel) ||
+          // An ad can be neither skipped nor stopped: swallow the binding, do
+          // not perform it.
+          (action.seeksPlayback && !canSeek) ||
+          (action == ShortcutAction.playPause && !canTogglePlayback)) {
         return KeyEventResult.handled;
       }
 
@@ -427,6 +448,17 @@ class KeyboardShortcutsService extends ChangeNotifier {
       }
       return KeyEventResult.handled;
     }
+
+    // Nothing claimed this key. TV remotes carry buttons no keyboard has — Guide,
+    // Info, the coloured keys — and Flutter names almost none of them, so the only
+    // way to bind one is to read its usage off the wire: turn on
+    // **Settings → General → Debug logging**, press the button in the player, then
+    // read the line below in **Settings → Logs**. Debug level, so it costs nothing
+    // until someone asks for it.
+    appLogger.d(
+      'player key unbound: usage=0x${event.physicalKey.usbHidUsage.toRadixString(16).padLeft(8, '0')} '
+      '(${physicalKeyLabel(event.physicalKey)})',
+    );
 
     return KeyEventResult.ignored;
   }

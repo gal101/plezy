@@ -5604,6 +5604,30 @@ class Translations$tunarr$en {
 
 	/// en: 'Hide the Live TV tab while GalTV is available. Turn this off to keep both tabs.'
 	String get galtvOverridesLiveTvSubtitle => 'Hide the Live TV tab while GalTV is available. Turn this off to keep both tabs.';
+
+	/// en: 'Hide ads'
+	String get galtvHideAds => 'Hide ads';
+
+	/// en: 'Never play filler. A break waits on the Up Next screen instead, and the next programme still starts at its scheduled time.'
+	String get galtvHideAdsSubtitle => 'Never play filler. A break waits on the Up Next screen instead, and the next programme still starts at its scheduled time.';
+
+	/// en: 'Preview the Up Next screen'
+	String get previewUpNext => 'Preview the Up Next screen';
+
+	/// en: 'See the break screen as the player draws it, with artwork and without.'
+	String get previewUpNextSubtitle => 'See the break screen as the player draws it, with artwork and without.';
+
+	/// en: 'Favourite channels'
+	String get favoriteChannels => 'Favourite channels';
+
+	/// en: 'Choose the channels that appear on Home'
+	String get favoriteChannelsSubtitle => 'Choose the channels that appear on Home';
+
+	/// en: 'Search by number or name'
+	String get favoriteChannelsSearch => 'Search by number or name';
+
+	/// en: 'No channels match'
+	String get favoriteChannelsEmpty => 'No channels match';
 }
 
 // Path: galtv
@@ -5652,6 +5676,32 @@ class Translations$galtv$en {
 
 	/// en: 'NOW'
 	String get nowBadge => 'NOW';
+
+	/// en: 'UP NEXT'
+	String get upNext => 'UP NEXT';
+
+	/// en: 'Starts at ${time}'
+	String startsAt({required Object time}) => 'Starts at ${time}';
+
+	/// en: 'TV Guide'
+	String get guide => 'TV Guide';
+
+	/// en: 'Channels'
+	String get browseChannels => 'Channels';
+
+	/// en: 'Live now'
+	String get shelfAllChannels => 'Live now';
+
+	/// en: 'Favourite channels'
+	String get shelfFavorites => 'Favourite channels';
+
+	/// en: 'CH ${number} · ${name}'
+	String channelLine({required Object number, required Object name}) => 'CH ${number} · ${name}';
+
+	/// en: 'Ad Break'
+	String get adBreak => 'Ad Break';
+
+	late final Translations$galtv$preview$en preview = Translations$galtv$preview$en.internal(_root);
 }
 
 // Path: services
@@ -7312,6 +7362,33 @@ class Translations$companionRemote$errors$en {
 
 	/// en: 'Connection lost'
 	String get connectionLost => 'Connection lost';
+}
+
+// Path: galtv.preview
+class Translations$galtv$preview$en {
+	Translations$galtv$preview$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'Up Next preview'
+	String get title => 'Up Next preview';
+
+	/// en: 'Live'
+	String get live => 'Live';
+
+	/// en: 'No logo'
+	String get noLogo => 'No logo';
+
+	/// en: 'No Plex metadata'
+	String get noMedia => 'No Plex metadata';
+
+	/// en: 'Long synopsis'
+	String get long => 'Long synopsis';
+
+	/// en: 'Renders the break screen exactly as the player and the tab do. Live asks the tuned channel for its real next programme.'
+	String get intro => 'Renders the break screen exactly as the player and the tab do. Live asks the tuned channel for its real next programme.';
 }
 
 // Path: services.names
@@ -9519,12 +9596,20 @@ extension on Translations {
 			'tunarr.galtvToggleSubtitle' => 'Show the GalTV tab in the navigation',
 			'tunarr.galtvOverridesLiveTv' => 'GalTV tab overrides Live TV',
 			'tunarr.galtvOverridesLiveTvSubtitle' => 'Hide the Live TV tab while GalTV is available. Turn this off to keep both tabs.',
+			'tunarr.galtvHideAds' => 'Hide ads',
+			'tunarr.galtvHideAdsSubtitle' => 'Never play filler. A break waits on the Up Next screen instead, and the next programme still starts at its scheduled time.',
+			'tunarr.previewUpNext' => 'Preview the Up Next screen',
+			'tunarr.previewUpNextSubtitle' => 'See the break screen as the player draws it, with artwork and without.',
+			_ => null,
+		} ?? switch (path) {
+			'tunarr.favoriteChannels' => 'Favourite channels',
+			'tunarr.favoriteChannelsSubtitle' => 'Choose the channels that appear on Home',
+			'tunarr.favoriteChannelsSearch' => 'Search by number or name',
+			'tunarr.favoriteChannelsEmpty' => 'No channels match',
 			'galtv.tabTitle' => 'GalTV',
 			'galtv.emptyTitle' => 'No channels yet',
 			'galtv.emptyBody' => 'Create a channel in Tunarr and it will show up here.',
 			'galtv.watch' => 'Watch',
-			_ => null,
-		} ?? switch (path) {
 			'galtv.tuneFailed' => 'Could not tune this channel. Check that Tunarr is reachable, then try again.',
 			'galtv.nothingPlaying' => 'Nothing is playing on this channel right now.',
 			'galtv.switchFailed' => 'Could not switch to that channel. Try again.',
@@ -9534,6 +9619,20 @@ extension on Translations {
 			'galtv.tuning' => 'Tuning…',
 			'galtv.watching' => 'Watching',
 			'galtv.nowBadge' => 'NOW',
+			'galtv.upNext' => 'UP NEXT',
+			'galtv.startsAt' => ({required Object time}) => 'Starts at ${time}',
+			'galtv.guide' => 'TV Guide',
+			'galtv.browseChannels' => 'Channels',
+			'galtv.shelfAllChannels' => 'Live now',
+			'galtv.shelfFavorites' => 'Favourite channels',
+			'galtv.channelLine' => ({required Object number, required Object name}) => 'CH ${number} · ${name}',
+			'galtv.adBreak' => 'Ad Break',
+			'galtv.preview.title' => 'Up Next preview',
+			'galtv.preview.live' => 'Live',
+			'galtv.preview.noLogo' => 'No logo',
+			'galtv.preview.noMedia' => 'No Plex metadata',
+			'galtv.preview.long' => 'Long synopsis',
+			'galtv.preview.intro' => 'Renders the break screen exactly as the player and the tab do. Live asks the tuned channel for its real next programme.',
 			'services.title' => 'Services',
 			'services.hubSubtitle' => 'Sync watch progress and request new titles.',
 			'services.integrations' => 'Integrations',

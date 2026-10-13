@@ -87,23 +87,90 @@ void main() {
     });
   });
 
-  group('TunarrClient.fetchPlexRatingKey', () {
-    test('returns the program externalId', () async {
+  group('TunarrClient.fetchProgramRef', () {
+    test('returns the program externalId and its library type', () async {
       final client = _client(
         MockClient((request) async {
           expect(request.url.toString(), 'https://gate.example.com/api/programs/faa640a4-0000');
-          return _json(<String, Object?>{'title': 'All Quiet', 'externalId': '466'});
+          return _json(<String, Object?>{'title': 'All Quiet', 'externalId': '466', 'type': 'movie'});
         }),
       );
 
-      expect(await client.fetchPlexRatingKey('faa640a4-0000'), '466');
+      final ref = await client.fetchProgramRef('faa640a4-0000');
+      expect(ref, isNotNull);
+      expect(ref!.ratingKey, '466');
+      expect(ref.type, 'movie');
+      expect(ref.isOtherVideo, isFalse, reason: 'a film from the Movies library can never be an ad');
+      client.dispose();
+    });
+
+    /// The first half of the filler discriminator: the library type. Necessary but
+    /// **not** sufficient — a channel may schedule clips from an `Other Videos`
+    /// library as its own programming, which is why the second half
+    /// (`fetchChannelOwnOtherVideoProgramIds`) exists.
+    test('flags an Other Videos program as an other_video candidate', () async {
+      final client = _client(
+        MockClient((request) async => _json(<String, Object?>{'externalId': '5200', 'type': 'other_video'})),
+      );
+
+      final ref = await client.fetchProgramRef('p');
+      expect(ref!.isOtherVideo, isTrue);
       client.dispose();
     });
 
     test('returns null when the program carries no externalId', () async {
       final client = _client(MockClient((request) async => _json(<String, Object?>{'title': 'All Quiet'})));
 
-      expect(await client.fetchPlexRatingKey('p'), isNull);
+      expect(await client.fetchProgramRef('p'), isNull);
+      client.dispose();
+    });
+  });
+
+  group('TunarrClient.fetchChannelOwnOtherVideoProgramIds', () {
+    test('asks for the channel\'s own other_video programs and collects their uuids', () async {
+      final client = _client(
+        MockClient((request) async {
+          expect(request.url.path, '/api/channels/chan-1/programs');
+          expect(request.url.queryParameters['type'], 'other_video');
+          expect(request.url.queryParameters['offset'], '0');
+          return _json(<String, Object?>{
+            'total': 2,
+            'size': 2,
+            'result': <Object?>[
+              <String, Object?>{'uuid': 'clip-1', 'type': 'other_video'},
+              <String, Object?>{'uuid': 'clip-2', 'type': 'other_video'},
+            ],
+          });
+        }),
+      );
+
+      expect(await client.fetchChannelOwnOtherVideoProgramIds('chan-1'), {'clip-1', 'clip-2'});
+      client.dispose();
+    });
+
+    test('pages until the server says the whole set is in', () async {
+      final offsets = <String>[];
+      final client = _client(
+        MockClient((request) async {
+          final offset = request.url.queryParameters['offset']!;
+          offsets.add(offset);
+          return offset == '0'
+              ? _json(<String, Object?>{'total': 2, 'result': <Object?>[<String, Object?>{'uuid': 'a'}]})
+              : _json(<String, Object?>{'total': 2, 'result': <Object?>[<String, Object?>{'uuid': 'b'}]});
+        }),
+      );
+
+      expect(await client.fetchChannelOwnOtherVideoProgramIds('chan-1'), {'a', 'b'});
+      expect(offsets, ['0', '1']);
+      client.dispose();
+    });
+
+    /// A side lookup that fails must not fail a tune, and must not turn a
+    /// channel's own clips into ads: the caller falls back to the coarse rule.
+    test('degrades to an empty set when the route fails', () async {
+      final client = _client(MockClient((request) async => http.Response('', 500)));
+
+      expect(await client.fetchChannelOwnOtherVideoProgramIds('chan-1'), isEmpty);
       client.dispose();
     });
   });

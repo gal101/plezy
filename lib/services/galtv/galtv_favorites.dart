@@ -12,8 +12,11 @@ import '../settings_service.dart';
 ///
 /// The stored value lives in [SettingsService.galtvFavoriteChannelIds] and is
 /// ordered by when each channel was favourited, which is the order the Home
-/// shelf will render. The functions here are pure so the rules below can be
-/// tested without prefs or a network.
+/// shelf will render. It is the **device-local cache** of a list that belongs to
+/// the Plex account — `GalTvFavoritesSync` keeps it in step with the gate — so
+/// every rule below is about reading and toggling, never about pruning. The
+/// functions here are pure so those rules can be tested without prefs or a
+/// network.
 class GalTvFavorites {
   const GalTvFavorites._();
 

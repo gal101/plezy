@@ -1947,6 +1947,20 @@ class _MainScreenState extends State<MainScreen>
     });
   }
 
+  /// Opens the GalTV tab tuned to [channelId], for a Home shelf card.
+  ///
+  /// The tab re-reads `galtvLastChannelId` on entry (`GalTvScreen._tune`), so
+  /// remembering the channel and selecting the tab is the whole operation — the
+  /// tab then resolves the live offset itself, exactly as if the channel had
+  /// been picked in the guide. The write is awaited before the switch so the
+  /// tune cannot race it.
+  Future<void> _openGalTvChannel(String channelId) async {
+    if (channelId.isEmpty || !mounted) return;
+    await SettingsService.instance.write(SettingsService.galtvLastChannelId, channelId);
+    if (!mounted) return;
+    _selectTab(NavigationTabId.galtv);
+  }
+
   void _openSettings() {
     if (PlatformDetector.shouldUseSideNavigation(context)) {
       _selectTab(NavigationTabId.settings);
@@ -2207,6 +2221,7 @@ class _MainScreenState extends State<MainScreen>
                     viewportWidth: viewportWidth,
                     selectLibrary: _selectLibrary,
                     openSettings: _openSettings,
+                    openGalTvChannel: _openGalTvChannel,
                     child: SideNavigationScope(
                       child: Stack(
                         clipBehavior: Clip.hardEdge,

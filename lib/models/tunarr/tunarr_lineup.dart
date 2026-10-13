@@ -107,6 +107,9 @@ class TunarrProgram {
   final int? year;
   final int? durationMs;
 
+  /// Content rating as the wire carries it (Tunarr's `rating`: `"R"`, `"TV-MA"`).
+  final String? contentRating;
+
   const TunarrProgram({
     this.title,
     this.externalId,
@@ -114,6 +117,7 @@ class TunarrProgram {
     this.type,
     this.year,
     this.durationMs,
+    this.contentRating,
   });
 
   static TunarrProgram? tryParse(Object? value) {
@@ -126,9 +130,17 @@ class TunarrProgram {
       type: json['type'] as String?,
       year: (json['year'] as num?)?.toInt(),
       durationMs: ((json['durationMs'] ?? json['duration_ms']) as num?)?.toInt(),
+      contentRating: json['rating']?.toString() ?? json['contentRating']?.toString(),
     );
   }
 
+  /// NOTE for whoever maps more of this body: `mediaSourceId` (and the `plex`
+  /// entry of `identifiers`) is **Tunarr's own** media-source UUID, *not* the Plex
+  /// `machineIdentifier` the app keys its clients by. Verified 2026-10-10: the
+  /// lineup reports `9e74c745-…` while `http://<plex>:32400/identity` reports
+  /// `2b4de25a5218f319e362965a18218950772171af`. Anything that needs an artwork
+  /// client must take the id from the app's own Plex client, never from here —
+  /// a card given the source id renders no images at all.
   Map<String, Object?> toJson() => {
     'title': title,
     'external_id': externalId,
@@ -136,5 +148,6 @@ class TunarrProgram {
     'type': type,
     'year': year,
     'duration_ms': durationMs,
+    'rating': contentRating,
   };
 }

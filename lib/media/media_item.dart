@@ -50,7 +50,14 @@ sealed class MediaItem with _$MediaItem {
     int? index,
     String? thumbPath,
     String? artPath,
+
+    /// The programme's Plex **wordmark**, for synthetic cards that know where it
+    /// lives (`/library/metadata/{key}/clearLogo`). Resolved by the same
+    /// `ClearLogoImage` every real item uses, which falls back to the title when
+    /// Plex has none.
+    String? clearLogoPath,
     int? durationMs,
+    int? viewOffsetMs,
     int? leafCount,
     double? rating,
     List<MediaRatingSource>? ratings,
@@ -74,7 +81,9 @@ sealed class MediaItem with _$MediaItem {
         index: index,
         thumbPath: thumbPath,
         artPath: artPath,
+        clearLogoPath: clearLogoPath,
         durationMs: durationMs,
+        viewOffsetMs: viewOffsetMs,
         leafCount: leafCount,
         rating: rating,
         ratings: ratings,
@@ -98,7 +107,9 @@ sealed class MediaItem with _$MediaItem {
         index: index,
         thumbPath: thumbPath,
         artPath: artPath,
+        clearLogoPath: clearLogoPath,
         durationMs: durationMs,
+        viewOffsetMs: viewOffsetMs,
         leafCount: leafCount,
         rating: rating,
         ratings: ratings,

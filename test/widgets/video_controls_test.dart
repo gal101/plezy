@@ -267,6 +267,33 @@ void main() {
       );
     });
 
+    /// A GalTV filler is offered the same slot with no marker in play — an ad has
+    /// none — so the rule has to accept the affordance on its own.
+    test('shows for a GalTV filler even though there is no marker', () {
+      expect(
+        shouldShowSkipMarkerButton(
+          hasFirstFrame: true,
+          hasMarker: false,
+          hasPlayNextPrompt: false,
+          skipButtonDismissed: false,
+          controlsVisible: false,
+          hasFillerAffordance: true,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldShowSkipMarkerButton(
+          hasFirstFrame: true,
+          hasMarker: false,
+          hasPlayNextPrompt: false,
+          skipButtonDismissed: false,
+          controlsVisible: false,
+        ),
+        isFalse,
+        reason: 'nothing to offer without a marker or the filler affordance',
+      );
+    });
+
     test('shows after first frame when marker is active and not dismissed', () {
       expect(
         shouldShowSkipMarkerButton(
@@ -582,6 +609,8 @@ void main() {
       bool Function()? isActive,
       bool Function()? isGuideOpen,
       VoidCallback? closeGuide,
+      bool Function()? isSlateOpen,
+      VoidCallback? dismissSlate,
     }) {
       return PlayerNavigationCoordinator(
         chromeController: chromeController,
@@ -589,6 +618,8 @@ void main() {
         dismissPrompt: dismissPrompt ?? () {},
         isGuideOpen: isGuideOpen,
         closeGuide: closeGuide,
+        isSlateOpen: isSlateOpen,
+        dismissSlate: dismissSlate,
         isChromePresented: isChromePresented ?? () => chromeController.controlsPresented,
         exitFullscreenIfActive: exitFullscreenIfActive ?? () async => false,
         physicalEscapeExitsFullscreen: physicalEscapeExitsFullscreenProvider ?? () => physicalEscapeExitsFullscreen,
@@ -656,6 +687,38 @@ void main() {
       expect(closes, 1, reason: 'the guide is the topmost layer, so Back dismisses it');
       expect(chromeController.controlsVisible, isTrue, reason: 'the press is not the chrome\'s while the layer is up');
       expect(exits, 0, reason: 'dismissing the layer does not leave the player');
+    });
+
+    testWidgets('Back dismisses the viewer-raised Up-Next slate, and only that one', (tester) async {
+      final chromeController = PlayerChromeController();
+      addTearDown(chromeController.dispose);
+      var dismissed = 0;
+      var exits = 0;
+      var slateOpen = true;
+      final coordinator = coordinatorFor(
+        chromeController,
+        isSlateOpen: () => slateOpen,
+        dismissSlate: () => dismissed++,
+        exitPlayer: () => exits++,
+      );
+      await pumpNavigationFocus(tester, coordinator);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.gameButtonB);
+
+      // The same "not now" as the slate's own X: the credits slate sits over
+      // something still playing, so closing it is a real choice and the press must
+      // not fall through to the chrome chain behind it.
+      expect(dismissed, 1, reason: 'Back is the slate\'s while a viewer-raised slate is up');
+      expect(chromeController.controlsVisible, isTrue);
+      expect(exits, 0);
+
+      // A *gap* slate is not dismissible — there is nothing behind it — so the host
+      // never offers it here and Back keeps its normal meaning.
+      slateOpen = false;
+      await tester.sendKeyEvent(LogicalKeyboardKey.gameButtonB);
+
+      expect(dismissed, 1, reason: 'a gap slate has nothing to dismiss');
+      expect(chromeController.controlsVisible, isFalse, reason: 'Back belongs to the chrome again');
     });
 
     testWidgets('Back exits during pre-first-frame loading even when controls default visible', (tester) async {

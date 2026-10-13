@@ -184,7 +184,7 @@ void main() {
       // Tunarr stores an upload as an absolute URL on its own host; only the gate
       // is reachable from the client.
       expect(
-        resolveTunarrIconUrl('http://192.168.100.149:8000/images/uploads/ab12.png', gate),
+        resolveTunarrIconUrl('http://192.0.2.1:8000/images/uploads/ab12.png', gate),
         '$gate/images/uploads/ab12.png',
       );
       expect(resolveTunarrIconUrl('/images/tunarr.png', gate), '$gate/images/tunarr.png');

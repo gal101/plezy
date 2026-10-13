@@ -6,6 +6,7 @@ import '../models/tunarr/tunarr_session.dart';
 import '../profiles/active_plex_token.dart';
 import '../profiles/active_profile_provider.dart';
 import '../profiles/profile_connection_registry.dart';
+import '../services/galtv/galtv_favorites_sync.dart';
 import '../services/tunarr/tunarr_auth_service.dart';
 import '../services/tunarr/tunarr_client.dart';
 import '../services/tunarr/tunarr_http_client.dart';
@@ -43,18 +44,26 @@ TunarrPlexTokenSupplier buildTunarrPlexTokenSupplier({
 /// connect screen calls [signIn] and hands the finished session to
 /// [adoptSession].
 class TunarrAccountProvider extends ChangeNotifier with DisposableChangeNotifierMixin {
-  TunarrAccountProvider({TunarrSessionStore? store, TunarrAuthService? authService})
-    : _store = store ?? const TunarrSessionStore(),
-      authService = authService ?? TunarrAuthService();
+  TunarrAccountProvider({
+    TunarrSessionStore? store,
+    TunarrAuthService? authService,
+    @visibleForTesting this.clientFactory,
+  }) : _store = store ?? const TunarrSessionStore(),
+       authService = authService ?? TunarrAuthService();
 
   final TunarrSessionStore _store;
   final TunarrAuthService authService;
+
+  /// Test seam: builds the client for a session. Production leaves it null and
+  /// gets the real [TunarrHttpClient] below.
+  final TunarrClient Function(TunarrSession session)? clientFactory;
   TunarrPlexTokenSupplier? _plexTokenSupplier;
 
   TunarrSession? _session;
   String _activeUserUuid = '';
   int _bindingGeneration = 0;
   TunarrClient? _client;
+  GalTvFavoritesSync? _favoritesSync;
 
   TunarrSession? get session => _session;
   bool get isConnected => _session != null;
@@ -65,6 +74,15 @@ class TunarrAccountProvider extends ChangeNotifier with DisposableChangeNotifier
   /// captured token, so every request resolves the active profile's live Plex
   /// token — a token captured once would go stale across a profile switch.
   TunarrClient? get client => _client;
+
+  /// Gate-backed favourite-channel sync for the bound session, or null while
+  /// disconnected.
+  ///
+  /// It lives here because this provider is what owns the gate base URL, the live
+  /// Plex token supplier and the signed-in Plex identity — the three things a sync
+  /// needs and none of which a screen can assemble. Both consumers (Home's shelves
+  /// and the favourites picker) already hold this provider.
+  GalTvFavoritesSync? get favoritesSync => _favoritesSync;
 
   /// Label for the connected account: the signed-in Plex username when
   /// known, else the account email, else the instance label. Empty when
@@ -152,17 +170,22 @@ class TunarrAccountProvider extends ChangeNotifier with DisposableChangeNotifier
   void _rebuildClient() {
     _client?.dispose();
     final session = _session;
-    _client = session == null
-        ? null
-        : TunarrClient(
-            http: TunarrHttpClient(baseUrl: session.baseUrl, plexTokenSupplier: resolvePlexToken),
-          );
+    if (session == null) {
+      _client = null;
+      _favoritesSync = null;
+      return;
+    }
+    _client =
+        clientFactory?.call(session) ??
+        TunarrClient(http: TunarrHttpClient(baseUrl: session.baseUrl, plexTokenSupplier: resolvePlexToken));
+    _favoritesSync = GalTvFavoritesSync(client: _client!, plexId: session.plexId);
   }
 
   @override
   void dispose() {
     _client?.dispose();
     _client = null;
+    _favoritesSync = null;
     super.dispose();
   }
 

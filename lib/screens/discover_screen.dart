@@ -24,9 +24,16 @@ import '../widgets/cycling_media_backdrop.dart';
 import '../widgets/optimized_media_image.dart' show ClearLogoImage, blurArtwork;
 import '../widgets/toolbar_scrim.dart';
 import '../widgets/system_clock.dart';
+import '../models/tunarr/tunarr_channel.dart';
+import '../models/tunarr/tunarr_lineup.dart';
 import '../providers/discover_provider.dart';
 import '../providers/multi_server_provider.dart';
+import '../providers/tunarr_account_provider.dart';
 import '../providers/watch_state_store.dart';
+import '../services/galtv/galtv_favorites.dart';
+import '../services/galtv/galtv_home_shelves.dart';
+import '../services/galtv/galtv_tuner.dart';
+import '../services/plex_client.dart';
 import '../widgets/hub_section.dart';
 import '../widgets/app_menu.dart';
 import '../widgets/clickable_cursor.dart';
@@ -113,6 +120,25 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   GlobalKey<HubSectionState>? _continueWatchingHubKey;
   final Map<String, GlobalKey<HubSectionState>> _hubKeysByIdentity = {};
   List<GlobalKey<HubSectionState>> _orderedHubKeys = const [];
+
+  /// Locally-synthesized GalTV shelves (every channel, then the favourites),
+  /// rendered ahead of Continue Watching. Empty whenever GalTV is off or no
+  /// Tunarr session is bound, which is also what keeps Home from paying a doomed
+  /// round trip for a profile that never signed in.
+  List<MediaHub> _galtvShelfHubs = const [];
+  final Map<String, GlobalKey<HubSectionState>> _galtvShelfHubKeys = {};
+
+  /// The Tunarr account this screen subscribed to, so its (asynchronous) session
+  /// bind can rebuild the shelves, and so [dispose] can unsubscribe.
+  TunarrAccountProvider? _tunarrAccount;
+
+  /// The favourites store's notifier, for the same reason: the picker is pushed
+  /// *over* Home, so no tab event fires when a star is toggled. Owned and cached
+  /// by [SettingsService] — remove the listener, never dispose it.
+  late final ValueNotifier<List<String>> _favoritesListenable;
+
+  GlobalKey<HubSectionState> _galtvShelfKey(String hubId) =>
+      _galtvShelfHubKeys.putIfAbsent(hubId, GlobalKey<HubSectionState>.new);
   final _tvBrowseRailKey = GlobalKey<TvBrowseRailState>();
   final _hubFocusMemory = HubFocusMemory();
 
@@ -158,12 +184,19 @@ class _DiscoverScreenState extends State<DiscoverScreen>
 
   List<GlobalKey<HubSectionState>> get _allHubKeys {
     final keys = <GlobalKey<HubSectionState>>[];
+    // Same order the rows are drawn in: Continue Watching, then the GalTV
+    // shelves. The vertical-navigation indices are built from this list.
     if (_continueWatchingHubKey != null && _onDeck.isNotEmpty) {
       keys.add(_continueWatchingHubKey!);
     }
+    keys.addAll([for (final hub in _galtvShelfHubs) _galtvShelfKey(hub.id)]);
     keys.addAll(_orderedHubKeys);
     return keys;
   }
+
+  /// Rows drawn above the backend hubs: the GalTV shelves, plus Continue
+  /// Watching when it has anything.
+  int get _hubRowsAboveBackend => _galtvShelfHubs.length + (_onDeck.isNotEmpty ? 1 : 0);
 
   bool get _isHeroSectionVisible => _onDeck.isNotEmpty && context.settingsRead(SettingsService.showHeroSection);
 
@@ -172,15 +205,19 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   // rebuilds hand TvBrowseRail the same hubs list and its didUpdateWidget
   // fast path — and the cached rail widget below — kick in.
   List<MediaHub>? _tvBrowseHubsCache;
-  (List<MediaItem>, List<MediaHub>, bool, String)? _tvBrowseHubsCacheKey;
+  (List<MediaItem>, List<MediaHub>, bool, String, List<MediaHub>)? _tvBrowseHubsCacheKey;
 
   List<MediaHub> get _tvBrowseHubs {
-    final key = (_onDeck, _hubs, _hasMoreContinueWatching, t.discover.continueWatching);
+    final key = (_onDeck, _hubs, _hasMoreContinueWatching, t.discover.continueWatching, _galtvShelfHubs);
     if (_tvBrowseHubsCache != null && key == _tvBrowseHubsCacheKey) return _tvBrowseHubsCache!;
     final hubs = <MediaHub>[];
+    // Continue Watching first, then the GalTV shelves (favourites, then every
+    // channel) — the owner's order: the rows you chose sit under the row the
+    // server chose for you.
     if (_onDeck.isNotEmpty) {
       hubs.add(_continueWatchingHub);
     }
+    hubs.addAll(_galtvShelfHubs);
     hubs.addAll(_hubs.where((hub) => hub.items.isNotEmpty));
     _tvBrowseHubsCache = hubs;
     _tvBrowseHubsCacheKey = key;
@@ -198,6 +235,178 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     more: _hasMoreContinueWatching,
     items: _onDeck,
   );
+
+  /// The Tunarr account provider, or null when this screen is mounted outside a
+  /// profile session — a bare screen in a test, or a tree with no Tunarr service
+  /// at all. An optional Home shelf must never be the thing that breaks Home.
+  TunarrAccountProvider? _tunarrAccountOrNull() {
+    try {
+      return context.read<TunarrAccountProvider>();
+    } on ProviderNotFoundException {
+      return null;
+    }
+  }
+
+  /// The **Plex item** behind each channel's airing (or next) programme, keyed by
+  /// channel id.
+  ///
+  /// Full parity with every other Home shelf's preview: those cards come from a
+  /// server payload, so the spotlight can show their score row (the lineup carries
+  /// no score at all) and Plex's own artwork paths. One metadata read per channel
+  /// with something to name, in parallel, on a shelf load — never per frame, and
+  /// never a `native-playback` read, which is a *write* (`AGENT.md` §5).
+  ///
+  /// The programme picked here is the same one the shelf will draw: [galTvAiringAt]
+  /// first, then [galTvNextAiring] — the exported helpers the builder itself calls,
+  /// so the two can never disagree about which slot a card is about.
+  ///
+  /// A missing client, a channel with nothing named, or a failed fetch simply
+  /// leaves that channel's card to the lineup's own fields.
+  Future<Map<String, MediaItem>> _loadGalTvProgrammeItems({
+    required PlexClient? plexClient,
+    required List<TunarrLineupChannel> lineups,
+    required Map<String, Set<String>> ownOtherVideoIdsByChannel,
+    required DateTime now,
+  }) async {
+    if (plexClient == null) return const {};
+
+    final ratingKeys = <String, String>{};
+    for (final lineup in lineups) {
+      final airing =
+          galTvAiringAt(lineup, now) ??
+          galTvNextAiring(lineup, now, ownOtherVideoIds: ownOtherVideoIdsByChannel[lineup.id] ?? const {});
+      final ratingKey = airing?.ratingKey;
+      if (ratingKey != null && ratingKey.isNotEmpty) ratingKeys[lineup.id] = ratingKey;
+    }
+    if (ratingKeys.isEmpty) return const {};
+
+    final channelIds = ratingKeys.keys.toList();
+    final items = await Future.wait(
+      channelIds.map(
+        (id) => plexClient.fetchItem(ratingKeys[id]!).then<MediaItem?>((item) => item, onError: (_, _) => null),
+      ),
+    );
+
+    return <String, MediaItem>{
+      for (var index = 0; index < channelIds.length; index++)
+        if (items[index] != null) channelIds[index]: items[index]!,
+    };
+  }
+
+  /// Rebuild the GalTV Home shelves: every channel, then the viewer's favourites.
+  ///
+  /// One `fetchChannels` plus **one** `fetchLineups` for the whole row — never a
+  /// `native-playback` per channel, which would be N network round trips *and* N
+  /// play-history writes (see `AGENT.md` §5). Both are cheap reads the guide
+  /// already makes.
+  ///
+  /// Gated exactly as the tab is (`enableGaltv` + a bound client), and a failure
+  /// clears the shelves rather than surfacing an error: Home's own content must
+  /// not be held hostage by an optional shelf.
+  Future<void> _loadGalTvShelves() async {
+    final account = _tunarrAccountOrNull();
+    final client = account?.client;
+    if (!SettingsService.instance.read(SettingsService.enableGaltv) || client == null) {
+      if (mounted && _galtvShelfHubs.isNotEmpty) setState(() => _galtvShelfHubs = const []);
+      return;
+    }
+
+    // The favourites belong to the Plex account, not to this device: pull the
+    // gate's copy before the shelves are built from the cache. Deliberately not
+    // awaited — Home must never wait on a settings sync — and it does not need to
+    // be: when the pull changes the cache, the favourites listenable fires
+    // (`_onFavoritesChanged`) and reloads the shelves once with the fresh list.
+    // A pull that changes nothing costs no write and no second load.
+    unawaited(account?.favoritesSync?.pull());
+
+    try {
+      final now = DateTime.now();
+      final results = await Future.wait<Object>([
+        client.fetchChannels(),
+        client.fetchLineups(
+          from: now.subtract(const Duration(minutes: 30)),
+          to: now.add(const Duration(hours: 12)),
+        ),
+      ]);
+      if (!mounted) return;
+
+      final channels = GalTvTuner.sortedByNumber(results[0] as List<TunarrChannel>);
+      final lineups = results[1] as List<TunarrLineupChannel>;
+      final baseUrl = account?.session?.baseUrl;
+      // Which `Other Videos` programs each channel schedules *itself*: unlike the
+      // raw library type, this is what tells a channel's own clips from the ads
+      // Tunarr fills its breaks with (see `galTvProgramIsFiller`). Asked only of
+      // the channels whose lineup carries such a program, so a deployment of films
+      // and episodes pays nothing.
+      final ownOtherVideoIds = await GalTvTuner(client: client).ownOtherVideoIdsByChannel(lineups);
+      if (!mounted) return;
+
+      // The app's own Plex server, for the cards' artwork client. Resolved through
+      // the client (a `machineIdentifier`), never from Tunarr: the lineup's
+      // `mediaSourceId` is Tunarr's own source UUID and matches no client, which
+      // left every channel card previewing as a bare gradient. A setup with no
+      // Plex client yet still gets its shelves — just without artwork or scores.
+      PlexClient? plexClient;
+      try {
+        plexClient = context.getPlexClientWithFallback(null);
+      } catch (_) {
+        plexClient = null;
+      }
+
+      final programmeItems = await _loadGalTvProgrammeItems(
+        plexClient: plexClient,
+        lineups: lineups,
+        ownOtherVideoIdsByChannel: ownOtherVideoIds,
+        now: now,
+      );
+      if (!mounted) return;
+
+      final hubs = buildGalTvHomeShelves(
+        channels: channels,
+        lineups: lineups,
+        ownOtherVideoIdsByChannel: ownOtherVideoIds,
+        plexServerId: plexClient?.serverId,
+        programmeItemsByChannel: programmeItems,
+        favoriteChannelIds: GalTvFavorites.read(SettingsService.instance).toSet(),
+        now: now,
+        allChannelsTitle: t.galtv.shelfAllChannels,
+        favoritesTitle: t.galtv.shelfFavorites,
+        subtitleFor: (channel) => t.galtv.channelLine(number: channel.number, name: channel.name),
+        // A channel in a gap shows what is coming, so its caption carries the
+        // channel *and* when that programme starts — otherwise the card reads as
+        // "this is on now". The time is formatted here rather than in the shelf
+        // builder, which stays free of widget-layer locators.
+        upcomingSubtitleFor: (channel, startsAt) =>
+            '${t.galtv.channelLine(number: channel.number, name: channel.name)} · '
+            '${t.galtv.startsAt(time: MaterialLocalizations.of(context).formatTimeOfDay(
+              TimeOfDay.fromDateTime(startsAt.toLocal()),
+              alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+            ))}',
+        resolveLogoUrl: (iconPath) => resolveTunarrIconUrl(iconPath, baseUrl),
+      );
+      setState(() => _galtvShelfHubs = hubs.where((hub) => hub.items.isNotEmpty).toList());
+    } catch (error) {
+      appLogger.w('GalTV: Home shelves could not be loaded', error: error);
+      if (mounted && _galtvShelfHubs.isNotEmpty) setState(() => _galtvShelfHubs = const []);
+    }
+  }
+
+  /// A Home shelf card opens the GalTV tab on its channel, at the live offset.
+  void _openGalTvShelfItem(MediaItem item) {
+    final channelId = galTvShelfChannelId(item.id);
+    if (channelId == null) return;
+    MainScreenFocusScope.openGalTvChannelOf(context, channelId);
+  }
+
+  /// Owns activation only for the GalTV shelves; the TV rail falls through to
+  /// the normal item routing for every other hub.
+  FutureOr<bool> _activateTvShelfItem(MediaHub hub, MediaItem item) {
+    if (!_isGalTvShelfHub(hub)) return false;
+    _openGalTvShelfItem(item);
+    return true;
+  }
+
+  bool _isGalTvShelfHub(MediaHub hub) => _galtvShelfHubs.any((shelf) => shelf.id == hub.id);
 
   void _setSpotlightItem(MediaItem item) => _spotlight.select(item);
 
@@ -339,7 +548,35 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     _discover.addListener(_onDiscoverChanged);
     _updateHubKeys();
     unawaited(_discover.load());
+    // The Tunarr session is *loaded from the profile's store asynchronously*,
+    // so at this point the provider is almost always still disconnected and
+    // `client` is null. Subscribing is what makes the shelves appear at all:
+    // without it the one early attempt would answer "no account" and nothing
+    // would ever ask again.
+    _tunarrAccount = _tunarrAccountOrNull();
+    _tunarrAccount?.addListener(_onTunarrAccountChanged);
+    // Shared, never-disposed notifier owned by the settings service.
+    _favoritesListenable = SettingsService.instance.listenable(SettingsService.galtvFavoriteChannelIds);
+    _favoritesListenable.addListener(_onFavoritesChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_loadGalTvShelves());
+    });
     _startAutoScroll();
+  }
+
+  /// A sign-in, a sign-out or the initial session bind all land here.
+  void _onTunarrAccountChanged() {
+    if (mounted) unawaited(_loadGalTvShelves());
+  }
+
+  /// A star toggled in Settings → Services → Tunarr → Favourite channels.
+  ///
+  /// That screen is *pushed over* Home, so leaving it fires no tab event and
+  /// nothing else would ever notice; without this the favourite row would only
+  /// appear after a tab switch. Reloading costs one cheap channel + lineup read,
+  /// which is also what keeps "now playing" from going stale.
+  void _onFavoritesChanged() {
+    if (mounted) unawaited(_loadGalTvShelves());
   }
 
   /// Mirror provider changes into this state's UI concerns: rebuild, apply
@@ -450,6 +687,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   @override
   void dispose() {
     _discover.removeListener(_onDiscoverChanged);
+    _tunarrAccount?.removeListener(_onTunarrAccountChanged);
+    _favoritesListenable.removeListener(_onFavoritesChanged);
     WidgetsBinding.instance.removeObserver(this);
     _autoScrollTimer?.cancel();
     _indicatorTimer?.cancel();
@@ -563,6 +802,9 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   void onTabShown() {
     _isTabVisible = true;
     _discover.refreshIfStale();
+    // "Now playing" goes stale on its own, and a sign-in/sign-out or a
+    // favourite toggled in Settings lands while another tab is up.
+    unawaited(_loadGalTvShelves());
     if (!_isAutoScrollPaused) {
       _startAutoScroll();
     }
@@ -972,6 +1214,23 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                     ),
                   ),
 
+                // The GalTV shelves follow Continue Watching: favourites first
+                // (they are the rows the viewer chose), then every channel.
+                for (int j = 0; j < _galtvShelfHubs.length; j++)
+                  SliverToBoxAdapter(
+                    child: HubSection(
+                      key: _galtvShelfKey(_galtvShelfHubs[j].id),
+                      hub: _galtvShelfHubs[j],
+                      focusMemory: _hubFocusMemory,
+                      icon: hubIconFor(_galtvShelfHubs[j]),
+                      onItemTap: _openGalTvShelfItem,
+                      onVerticalNavigation: (isUp) =>
+                          _handleVerticalNavigation((_onDeck.isNotEmpty ? 1 : 0) + j, isUp),
+                      onNavigateUp: (!_onDeck.isNotEmpty && j == 0) ? _focusTopBoundary : null,
+                      onNavigateToSidebar: _navigateToSidebar,
+                    ),
+                  ),
+
                 // Recommendation Hubs (Trending, Top in Genre, etc.)
                 for (int i = 0; i < _hubs.length; i++)
                   SliverToBoxAdapter(
@@ -982,9 +1241,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                       icon: hubIconFor(_hubs[i]),
                       showServerName: showServerNameOnHubs || hubsSpanMultipleServers,
                       onRefresh: _discover.updateItem,
-                      // Hub index is i + 1 if continue watching exists, otherwise i
-                      onVerticalNavigation: (isUp) => _handleVerticalNavigation(_onDeck.isNotEmpty ? i + 1 : i, isUp),
-                      onNavigateUp: (i == 0 && _onDeck.isEmpty) ? _focusTopBoundary : null,
+                      onVerticalNavigation: (isUp) => _handleVerticalNavigation(_hubRowsAboveBackend + i, isUp),
+                      onNavigateUp: (i == 0 && _hubRowsAboveBackend == 0) ? _focusTopBoundary : null,
                       onNavigateToSidebar: _navigateToSidebar,
                     ),
                   ),
@@ -1072,6 +1330,9 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       onRemoveFromContinueWatching: _discover.refreshContinueWatching,
       isContinueWatchingHub: (hub) => hub.isContinueWatchingHub,
       usesContinueWatchingAction: (hub) => hub.usesContinueWatchingAction,
+      // GalTV shelf cards open the GalTV tab on their channel; every other hub
+      // keeps the rail's default item activation.
+      onActivateItem: _activateTvShelfItem,
       // Every other hub pages from its server in View All, as on phones; handing
       // it the preview items only showed that preview again.
       loadMoreItems: (hub) => hub.id == 'continue_watching' ? _discover.loadAllContinueWatching : null,

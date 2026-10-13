@@ -230,7 +230,44 @@ extension _PlexVideoControlsMarkerMethods on _PlexVideoControlsState {
     hasPlayNextPrompt: widget.playNextFocusNode != null,
     skipButtonDismissed: _skipButtonDismissed,
     controlsVisible: _showControls,
+    hasFillerAffordance: _galTvFillerAffordance,
   );
+
+  /// Whether the chrome should offer the Up-Next slate because the item playing is
+  /// a filler. GalTV only, and only when the host supplies the action — every other
+  /// session keeps this slot entirely to skip markers.
+  ///
+  /// An ad carries no Plex marker, so this is the only signal that "what is next"
+  /// is a live question; the marker path cannot cover it.
+  bool get _galTvFillerAffordance =>
+      widget.isGalTv && widget.galTvOnFiller && widget.onShowGalTvUpNext != null;
+
+  /// Whether the slot is offering **GalTV's "what is next"** rather than a Plex
+  /// skip prompt.
+  ///
+  /// One expression on purpose: three things must agree on it — the button's
+  /// label, the button's own action, and the player **surface's** Select, which
+  /// is the same question asked with the chrome down.
+  bool get _galTvUpNextSlot =>
+      widget.isGalTv &&
+      widget.onShowGalTvUpNext != null &&
+      ((_currentMarker?.isCredits ?? false) || _galTvFillerAffordance);
+
+  /// What the slot does when it is activated — from its own button, or from the
+  /// surface's Select.
+  ///
+  /// The filler case has **no marker**: routing that press through
+  /// [_activateSkipMarker] reached `_skipMarker`'s marker guard and did nothing
+  /// at all, which is the owner's *"i try by pushing select/ok button on remote
+  /// but doesnt do anything"* on the TV (2026-10-09).
+  void _activateSkipMarkerOrUpNext() {
+    if (!_isSkipMarkerButtonVisible) return;
+    if (_galTvUpNextSlot) {
+      widget.onShowGalTvUpNext!();
+      return;
+    }
+    _activateSkipMarker();
+  }
 
   void _activateSkipMarker() {
     if (!_isSkipMarkerButtonVisible) return;
@@ -261,14 +298,21 @@ extension _PlexVideoControlsMarkerMethods on _PlexVideoControlsState {
   }
 
   Widget _buildSkipMarkerButton() {
-    return ValueListenableBuilder<double>(
+    final marker = _currentMarker;
+    // In a GalTV session the marker is not "skip these" but "here is what is
+    // next" — the same slot, a different question, and its own action. A **filler**
+    // raises the same question with no marker at all, so it shares the slot.
+    final galTvUpNext = _galTvUpNextSlot;
+    if (marker == null && !galTvUpNext) return const SizedBox.shrink();
+
+    final button = ValueListenableBuilder<double>(
       valueListenable: _autoSkipProgress,
       builder: (context, autoSkipProgress, _) {
         return ValueListenableBuilder<bool>(
           valueListenable: _autoSkipActive,
           builder: (context, isAutoSkipActive, _) {
             return SkipMarkerButton(
-              marker: _currentMarker!,
+              marker: marker,
               playerDuration: widget.player.state.duration,
               hasNextEpisode: widget.onNext != null,
               isAutoSkipActive: isAutoSkipActive,
@@ -276,12 +320,35 @@ extension _PlexVideoControlsMarkerMethods on _PlexVideoControlsState {
               autoSkipDelay: _autoSkipDelay,
               autoSkipProgress: autoSkipProgress,
               focusNode: _skipMarkerFocusNode,
-              onActivate: _activateSkipMarker,
+              galTvUpNext: galTvUpNext,
+              onActivate: galTvUpNext ? widget.onShowGalTvUpNext! : _activateSkipMarker,
               onFocusDown: () => _desktopControlsKey.currentState?.requestPlayPauseFocus(),
             );
           },
         );
       },
+    );
+
+    // On a filler the slot also carries **what is next**, in miniature: the next
+    // programme's wordmark and start time ride above the button for the whole ad,
+    // so the answer is on screen without the viewer asking for the slate. The slot
+    // grows upward — the button keeps its corner, which is what the surrounding
+    // `AnimatedPositioned` anchors.
+    final upNextListenable = widget.galTvUpNext;
+    if (!galTvUpNext || upNextListenable == null) return button;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        ValueListenableBuilder<GalTvUpNext?>(
+          valueListenable: upNextListenable,
+          builder: (context, upNext, _) => upNext == null
+              ? const SizedBox.shrink()
+              : GalTvUpNextHint(upNext: upNext, client: widget.galTvUpNextClient),
+        ),
+        const SizedBox(height: 10),
+        button,
+      ],
     );
   }
 }

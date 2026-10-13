@@ -19,17 +19,29 @@ enum ShortcutAction {
   playPause('play_pause', HotKey(key: PhysicalKeyboardKey.space), requiresPlayback: true),
   volumeUp('volume_up', HotKey(key: PhysicalKeyboardKey.arrowUp)),
   volumeDown('volume_down', HotKey(key: PhysicalKeyboardKey.arrowDown)),
-  seekForward('seek_forward', HotKey(key: PhysicalKeyboardKey.arrowRight), requiresPlayback: true),
-  seekBackward('seek_backward', HotKey(key: PhysicalKeyboardKey.arrowLeft), requiresPlayback: true),
+  seekForward(
+    'seek_forward',
+    HotKey(key: PhysicalKeyboardKey.arrowRight),
+    requiresPlayback: true,
+    seeksPlayback: true,
+  ),
+  seekBackward(
+    'seek_backward',
+    HotKey(key: PhysicalKeyboardKey.arrowLeft),
+    requiresPlayback: true,
+    seeksPlayback: true,
+  ),
   seekForwardLarge(
     'seek_forward_large',
     HotKey(key: PhysicalKeyboardKey.arrowRight, modifiers: [HotKeyModifier.shift]),
     requiresPlayback: true,
+    seeksPlayback: true,
   ),
   seekBackwardLarge(
     'seek_backward_large',
     HotKey(key: PhysicalKeyboardKey.arrowLeft, modifiers: [HotKeyModifier.shift]),
     requiresPlayback: true,
+    seeksPlayback: true,
   ),
   fullscreenToggle('fullscreen_toggle', HotKey(key: PhysicalKeyboardKey.keyF)),
   muteToggle('mute_toggle', HotKey(key: PhysicalKeyboardKey.keyM)),
@@ -40,8 +52,18 @@ enum ShortcutAction {
     HotKey(key: PhysicalKeyboardKey.keyS, modifiers: [HotKeyModifier.shift]),
     requiresPlayback: true,
   ),
-  chapterNext('chapter_next', HotKey(key: PhysicalKeyboardKey.keyN), requiresPlayback: true),
-  chapterPrevious('chapter_previous', HotKey(key: PhysicalKeyboardKey.keyP), requiresPlayback: true),
+  chapterNext(
+    'chapter_next',
+    HotKey(key: PhysicalKeyboardKey.keyN),
+    requiresPlayback: true,
+    seeksPlayback: true,
+  ),
+  chapterPrevious(
+    'chapter_previous',
+    HotKey(key: PhysicalKeyboardKey.keyP),
+    requiresPlayback: true,
+    seeksPlayback: true,
+  ),
   episodeNext(
     'episode_next',
     HotKey(key: PhysicalKeyboardKey.keyN, modifiers: [HotKeyModifier.shift]),
@@ -62,11 +84,13 @@ enum ShortcutAction {
     'sub_seek_next',
     HotKey(key: PhysicalKeyboardKey.arrowRight, modifiers: [HotKeyModifier.control]),
     requiresPlayback: true,
+    seeksPlayback: true,
   ),
   subSeekPrev(
     'sub_seek_prev',
     HotKey(key: PhysicalKeyboardKey.arrowLeft, modifiers: [HotKeyModifier.control]),
     requiresPlayback: true,
+    seeksPlayback: true,
   ),
   shaderToggle('shader_toggle', HotKey(key: PhysicalKeyboardKey.keyG), requiresShaderSupport: true),
   skipMarker('skip_marker', HotKey(key: PhysicalKeyboardKey.enter), requiresPlayback: true),
@@ -102,6 +126,7 @@ enum ShortcutAction {
     this.requiresShaderSupport = false,
     this.requiresGalTvGuide = false,
     this.requiresGalTvChannel = false,
+    this.seeksPlayback = false,
   });
 
   /// Stable key this action is stored under in preferences.
@@ -129,6 +154,16 @@ enum ShortcutAction {
   /// Whether the action only means something in a GalTV session that can switch
   /// channels (a session with a channel resolver).
   final bool requiresGalTvChannel;
+
+  /// Whether the action **moves the playhead** — every ±N seek, the subtitle
+  /// seek pair and the chapter steps.
+  ///
+  /// Named for the one thing that has to be able to refuse them: while a GalTV
+  /// **filler** (an ad) plays there is no seeking at all, and the chrome's own
+  /// buttons, bar and tap zones are only half of the surface — these bindings are
+  /// the other half, and they are user-configurable, so the refusal cannot live
+  /// in the widget tree.
+  final bool seeksPlayback;
 
   static final Map<String, ShortcutAction> _byId = {for (final action in values) action.id: action};
 

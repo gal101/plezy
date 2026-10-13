@@ -349,6 +349,19 @@ extension _VideoPlayerBuildMethods on VideoPlayerScreenState {
                         onGalTvChannelStep: widget.galTv?.canSwitchChannel == true
                             ? (delta) => unawaited(_surfGalTvChannel(delta))
                             : null,
+                        // Turns the credits marker's button into the UP NEXT
+                        // affordance, and is what makes that marker render at all
+                        // in a GalTV session. The same affordance is offered while
+                        // a **filler** plays — see `galTvOnFiller`.
+                        onShowGalTvUpNext: widget.galTv != null ? _showGalTvUpNext : null,
+                        galTvOnFiller: _galTvItemIsFiller,
+                        // While a filler plays the same slot also shows what is
+                        // next in miniature, so the answer is on screen without
+                        // pressing anything. Its own notifier, not the slate's:
+                        // a non-null `upNext` mounts the full layer, and raising
+                        // that stays the viewer's call.
+                        galTvUpNext: widget.galTv?.nextUp,
+                        galTvUpNextClient: _galTvArtworkClient,
                         toastController: _toastController,
                       ),
                     );
@@ -376,6 +389,44 @@ extension _VideoPlayerBuildMethods on VideoPlayerScreenState {
                 onPause: _onStillWatchingPause,
                 onContinue: _onStillWatchingContinue,
               ),
+              // GalTV break slate. Shown while the schedule has nothing playable
+              // (a break the filler lists could not fill): the picture is parked,
+              // so the route stays put and simply names what is coming. Sits
+              // *under* the guide layer, so a viewer who opens the grid during a
+              // break still gets the grid.
+              if (widget.galTv != null)
+                Positioned.fill(
+                  child: ValueListenableBuilder<GalTvUpNext?>(
+                    valueListenable: widget.galTv!.upNext,
+                    builder: (context, upNext, _) => upNext == null
+                        ? const SizedBox.shrink()
+                        : GalTvUpNextOverlay(
+                            upNext: upNext,
+                            channelLabel: _galTvChannelName.isEmpty
+                                ? null
+                                : 'CH $_galTvChannelNumber · $_galTvChannelName',
+                            channelLogoUrl: _galTvChannelLogoUrl,
+                            logoHeaders: _galTvLogoHeaders,
+                            client: _galTvArtworkClient,
+                            // This slate paints over the player's own chrome, so
+                            // it carries the two controls a viewer on a break
+                            // actually needs. Same callbacks the chrome uses —
+                            // no second path into the tuner.
+                            onChannelStep: widget.galTv?.canSwitchChannel == true
+                                ? (delta) => unawaited(_surfGalTvChannel(delta))
+                                : null,
+                            onOpenGuide: widget.galTv?.hasGuide == true ? _toggleGalTvGuide : null,
+                            // Only a viewer-raised slate (the credits button) can
+                            // be closed; a gap slate is the channel's own state.
+                            onDismiss: _galTvUpNextDismissible ? _dismissGalTvUpNext : null,
+                            // The guide layer draws over this one and takes the
+                            // ring with it; the slate needs to know when it goes
+                            // away so it can take the ring back (owner report,
+                            // 2026-10-09).
+                            guideVisible: widget.galTv?.hasGuide == true ? widget.galTv!.guideVisible : null,
+                          ),
+                  ),
+                ),
               // GalTV guide layer. The player owns the route and the video keeps
               // playing underneath; the layer's own ValueListenableBuilder
               // mounts it only while `guideVisible` is true, and it takes chrome

@@ -13,6 +13,8 @@ import '../../widgets/focusable_list_tile.dart';
 import '../../widgets/setting_tile.dart';
 import '../../widgets/settings_page.dart';
 import '../../widgets/settings_section.dart';
+import '../galtv/galtv_up_next_preview_screen.dart';
+import 'tunarr_favorites_screen.dart';
 
 /// Connected-state settings for the Tunarr instance: who is signed in, which
 /// instance, the GalTV tab toggle, and disconnect.
@@ -77,6 +79,24 @@ class TunarrSettingsScreen extends StatelessWidget {
                   icon: Symbols.swap_horiz_rounded,
                   title: t.tunarr.galtvOverridesLiveTv,
                   subtitle: t.tunarr.galtvOverridesLiveTvSubtitle,
+                ),
+                SettingSwitchTile(
+                  pref: SettingsService.galtvHideAds,
+                  icon: Symbols.block_rounded,
+                  title: t.tunarr.galtvHideAds,
+                  subtitle: t.tunarr.galtvHideAdsSubtitle,
+                ),
+                SettingNavigationTile(
+                  icon: Symbols.star_rounded,
+                  title: t.tunarr.favoriteChannels,
+                  subtitle: t.tunarr.favoriteChannelsSubtitle,
+                  destinationBuilder: (context) => const TunarrFavoritesScreen(),
+                ),
+                SettingNavigationTile(
+                  icon: Symbols.preview_rounded,
+                  title: t.tunarr.previewUpNext,
+                  subtitle: t.tunarr.previewUpNextSubtitle,
+                  destinationBuilder: (context) => const GalTvUpNextPreviewScreen(),
                 ),
               ],
             ),

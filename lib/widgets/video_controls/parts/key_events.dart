@@ -51,13 +51,20 @@ extension _PlexVideoControlsKeyEventMethods on _PlexVideoControlsState {
     // button is the sole affordance on screen; with the OSD up it is a real
     // focusable control and Select must stay "toggle playback".
     if (!_showControls && _isSkipMarkerButtonVisible) {
-      _activateSkipMarker();
+      // The slot's **own** action, whichever it is: in GalTV the same slot may be
+      // offering "what is next" with no marker behind it (an ad), and routing
+      // that press through the skip path reached a marker guard and silently did
+      // nothing — the owner's TV report, 2026-10-09.
+      _activateSkipMarkerOrUpNext();
       return;
     }
     // Raise the chrome *before* toggling: Select is the deliberate "show me the
     // controls" affordance, and the visible chrome suppresses the transient
     // transport disc that would otherwise flash underneath it.
     _showControlsWithFocus(requestFocus: requestFocus);
+    // An ad cannot be stopped, so Select only raises the chrome here — which is
+    // how the channel steps and the guide are reached, and the only way out.
+    if (widget.galTvOnFiller) return;
     unawaited(_playOrPause());
   }
 
@@ -138,6 +145,11 @@ extension _PlexVideoControlsKeyEventMethods on _PlexVideoControlsState {
       canToggleGalTvGuide: widget.onToggleGalTvGuide != null,
       onToggleGalTvGuide: widget.onToggleGalTvGuide,
       canSwitchGalTvChannel: widget.onGalTvChannelStep != null,
+      // The chrome's own buttons, bar and tap zones are only half the seek
+      // surface; these bindings are the other half and they are configurable, so
+      // the refusal lives here rather than in any widget.
+      canSeek: !widget.galTvOnFiller,
+      canTogglePlayback: !widget.galTvOnFiller,
       onGalTvChannelStep: widget.onGalTvChannelStep,
       onPlayPause: () => unawaited(_playOrPause()),
       onToggleShader: _toggleShader,
@@ -193,6 +205,12 @@ extension _PlexVideoControlsKeyEventMethods on _PlexVideoControlsState {
     // stays down and subtitles stay readable (#1676).
     final globalCommand = _playPauseActivation(event);
     if (globalCommand != null) {
+      // An ad cannot be stopped. This handler is the one that works "regardless
+      // of focus", so it is where Space and Enter would otherwise reach an ad the
+      // chrome no longer offers a play/pause button for — the owner's
+      // 2026-10-09 *"disable play pause with space/enter keys"*. Consumed, not
+      // ignored, so the key cannot leak to the route below.
+      if (widget.galTvOnFiller) return true;
       unawaited(_playOrPause(command: globalCommand));
       return true; // Event handled, stop propagation
     }
@@ -333,7 +351,10 @@ extension _PlexVideoControlsKeyEventMethods on _PlexVideoControlsState {
     if (!isMobile && key.isDpadDirection && playerDirectionalNavigationEnabled()) {
       if (!_showControls) {
         if (key.isLeftKey || key.isRightKey) {
-          if (shouldStartHiddenDirectionalSeek(event)) {
+          // An ad cannot be skipped, and the hidden seek is the last way left to
+          // do it once the buttons, the bar and the tap zones are gone. The key
+          // is still consumed so it cannot leak to the route below.
+          if (shouldStartHiddenDirectionalSeek(event) && !widget.galTvOnFiller) {
             _hiddenDirectionalSeek(forward: key == LogicalKeyboardKey.arrowRight, isRepeat: event is KeyRepeatEvent);
           }
         } else {

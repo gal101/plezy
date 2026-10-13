@@ -416,6 +416,12 @@ class _TimelineSliderState extends State<TimelineSlider> {
       slider = FocusableWrapper(
         focusNode: widget.focusNode,
         onKeyEvent: widget.enabled ? widget.onKeyEvent : null,
+        // A disabled slider has no key handler, so focus on it is a dead end for
+        // a D-pad: it cannot be left with DOWN and every arrow is swallowed
+        // upstream. Refusing focus keeps "can the viewer do anything here?" and
+        // "may this hold the remote?" the same question — and moves focus off an
+        // already-focused seek bar the moment an ad starts.
+        canRequestFocus: widget.enabled,
         onFocusChange: (hasFocus) {
           setState(() => _isFocused = hasFocus);
           widget.onFocusChange?.call(hasFocus);

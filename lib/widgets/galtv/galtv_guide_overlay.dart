@@ -9,7 +9,9 @@ import '../../media/media_server_client.dart';
 import '../../models/galtv/galtv_guide.dart';
 import '../../theme/mono_tokens.dart';
 import '../../utils/app_logger.dart';
+import '../../utils/formatters.dart';
 import '../../utils/media_image_helper.dart';
+import '../app_icon.dart';
 import '../optimized_media_image.dart';
 import '../video_controls/widgets/channel_logo.dart';
 
@@ -59,6 +61,14 @@ const double _stripViewportRightInset = _rowsListPadding + _rowBorderWidth;
 /// first cell. Part of the row's width, so the time scale accounts for it.
 double _leadingWidthFor(GalTvGuideRow row, double pixelsPerMinute) => row.leadingMs / 60000 * pixelsPerMinute;
 
+/// Narrowest break cell that still gets its glyph and length drawn.
+///
+/// Below this the cell is only a few pixels of dimmed fill — a 30-minute break at
+/// the guide's floor (`_minPixelsPerMinute`) is ~100 px, so in practice only a
+/// channel with a tiny flex — impossible, since Tunarr folds those — or a heavily
+/// zoomed-out grid would fall under it.
+const double _breakBadgeMinWidth = 56;
+
 /// The pitch [entry] occupies at [pixelsPerMinute]: its duration at the shared
 /// time scale. Shared with the row, which sums it to decide whether its strip
 /// actually overflows.
@@ -106,6 +116,65 @@ double _fitPixelsPerMinute(List<GalTvGuideRow> rows, double budget) {
     }
   }
   return low;
+}
+
+/// A guide cell's backdrop, with the fallback an episode needs.
+///
+/// A film is one Plex item, so `/library/metadata/{key}/art` is its own backdrop.
+/// An **episode** is not: Plex keeps the backdrop on the *show*, and there is no
+/// `art` for the episode's own key at all. Tunarr says so plainly — its program
+/// payload for an episode lists `poster` and `banner` and nothing else (verified
+/// live 2026-10-08 on `TEST2` / Severance "Good News About Hell", `externalId`
+/// 3747). Asking for the episode's `art` therefore fails and the cell fell back to
+/// plain fill, which is the owner's report: *"backgrounds don't work for TV show
+/// episodes"*.
+///
+/// The second attempt is the episode's own **`thumb`** — the 16:9 still Plex keeps
+/// per episode, the same image this app already shows as an episode thumbnail
+/// everywhere else. That is a *per-episode* picture, which is the better answer
+/// anyway: one show backdrop would look identical on every cell in the row.
+///
+/// Retrying costs one failed image request per episode cell, and the result is
+/// disk-cached by [OptimizedMediaImage] like any other.
+class _ProgrammeBackdrop extends StatefulWidget {
+  const _ProgrammeBackdrop({required this.client, required this.ratingKey, required this.width});
+
+  final MediaServerClient? client;
+  final String ratingKey;
+  final double width;
+
+  @override
+  State<_ProgrammeBackdrop> createState() => _ProgrammeBackdropState();
+}
+
+class _ProgrammeBackdropState extends State<_ProgrammeBackdrop> {
+  /// The image kinds to try, in order; the first that loads wins.
+  static const _sources = <String>['art', 'thumb'];
+  static const _types = <ImageType>[ImageType.art, ImageType.thumb];
+
+  int _attempt = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_attempt >= _sources.length) return const SizedBox.shrink();
+    return OptimizedMediaImage(
+      client: widget.client,
+      imagePath: '/library/metadata/${widget.ratingKey}/${_sources[_attempt]}',
+      width: widget.width,
+      fit: BoxFit.cover,
+      imageType: _types[_attempt],
+      errorWidget: (_, _, _) {
+        // A build must not mutate state, so the retry is scheduled: the next frame
+        // swaps in the fallback source, and the one after that gives up.
+        if (_attempt + 1 < _sources.length) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _attempt += 1);
+          });
+        }
+        return const SizedBox.shrink();
+      },
+    );
+  }
 }
 
 /// The GalTV guide as a layer over the still-playing video.
@@ -406,7 +475,7 @@ class _GalTvGuideOverlayState extends State<GalTvGuideOverlay> {
             focusNode: _closeFocusNode,
             onPressed: widget.onClose,
             tooltip: t.common.close,
-            icon: const Icon(Symbols.close_rounded),
+            icon: const AppIcon(Symbols.close_rounded),
             color: tk.text,
           ),
         ],
@@ -1096,17 +1165,11 @@ class _GalTvGuideEntryTile extends StatelessWidget {
               // The item's own Plex backdrop, fetched the way the rest of the app
               // fetches artwork (sized `/photo/:/transcode`, disk-cached, token
               // included). A missing backdrop, or no client, simply shows the cell
-              // fill underneath — never a broken tile.
+              // fill underneath — never a broken tile. See [_ProgrammeBackdrop] for
+              // why an episode needs a second attempt.
               if (ratingKey != null)
                 Positioned.fill(
-                  child: OptimizedMediaImage(
-                    client: client,
-                    imagePath: '/library/metadata/$ratingKey/art',
-                    width: width,
-                    fit: BoxFit.cover,
-                    imageType: ImageType.art,
-                    errorWidget: (_, _, _) => const SizedBox.shrink(),
-                  ),
+                  child: _ProgrammeBackdrop(client: client, ratingKey: ratingKey, width: width),
                 ),
               // A scrim, because artwork can be bright exactly where the white title
               // sits. Denser at the bottom, where the times are.
@@ -1131,6 +1194,36 @@ class _GalTvGuideEntryTile extends StatelessWidget {
                     alignment: Alignment.centerLeft,
                     widthFactor: progress,
                     child: const ColoredBox(color: Color(0x38000000)),
+                  ),
+                ),
+              // A break gets a face. Tunarr folds every flex shorter than 30
+              // minutes into the programme before it (see `AGENT.md` §5), so a
+              // break cell reaching us is always a substantial one — an ad break
+              // with nothing on it read as a failed load, hence the glyph and the
+              // length. Painted under the text block, centred in the dead space.
+              if (entry.isBreak && width >= _breakBadgeMinWidth)
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Symbols.campaign_rounded,
+                        size: (width * 0.2).clamp(16.0, 30.0),
+                        color: tokens.text.withValues(alpha: 0.40),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        formatDurationTextual(entry.duration.inMilliseconds),
+                        maxLines: 1,
+                        overflow: TextOverflow.clip,
+                        style: TextStyle(
+                          color: tokens.text.withValues(alpha: 0.52),
+                          fontSize: 11,
+                          height: 1.1,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               // The progress bar rides the cell's bottom edge instead of taking a row
@@ -1183,7 +1276,12 @@ class _GalTvGuideEntryTile extends StatelessWidget {
                     // loud layout overflow (the widget test pins that), never silent
                     // overlap.
                     Text(
-                      entry.title,
+                      // A `flex` slot carries no programme, so it has no title of
+                      // its own — name it for what it is rather than leaving the
+                      // cell blank. (Tunarr would offer its own label here,
+                      // `channel.guideFlexTitle` else the channel name; the owner
+                      // asked for a fixed "Ad Break" instead.)
+                      entry.isBreak ? t.galtv.adBreak : entry.title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(

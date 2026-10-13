@@ -38,6 +38,9 @@ import '../../focus/transport_keys.dart';
 import '../../database/app_database.dart';
 import '../../media/media_backend.dart';
 import '../../media/media_item.dart';
+import '../../media/media_server_client.dart';
+import '../../models/galtv/galtv_guide.dart';
+import '../galtv/galtv_up_next_hint.dart';
 import '../../media/stepped_seek.dart';
 import '../../models/livetv_capture_buffer.dart';
 import '../../providers/multi_server_provider.dart';
@@ -229,8 +232,14 @@ bool shouldShowSkipMarkerButton({
   required bool hasPlayNextPrompt,
   required bool skipButtonDismissed,
   required bool controlsVisible,
+  /// A GalTV filler is playing: the same slot offers the next programme even
+  /// though no Plex marker is in play (an ad has none).
+  bool hasFillerAffordance = false,
 }) {
-  return hasFirstFrame && hasMarker && !hasPlayNextPrompt && (!skipButtonDismissed || controlsVisible);
+  return hasFirstFrame &&
+      (hasMarker || hasFillerAffordance) &&
+      !hasPlayNextPrompt &&
+      (!skipButtonDismissed || controlsVisible);
 }
 
 /// The viewer's raw "Video Player Navigation" preference, ignoring TV.
@@ -309,6 +318,17 @@ class PlayerNavigationCoordinator {
   /// and lands here.
   final bool Function()? isGuideOpen;
   final VoidCallback? closeGuide;
+
+  /// The Up-Next slate, **only when the viewer raised it themselves** (the credits
+  /// button) — the case whose X this mirrors.
+  ///
+  /// Lowest of the three layers on purpose: the guide paints above the slate, and
+  /// the playback prompts are more modal than either, so Back peels them in that
+  /// order. A slate filling a *gap* is deliberately absent here — there is nothing
+  /// behind it, so Back keeps its normal meaning rather than leaving the viewer
+  /// staring at a parked picture.
+  final bool Function()? isSlateOpen;
+  final VoidCallback? dismissSlate;
   final bool Function() isChromePresented;
   final Future<bool> Function() exitFullscreenIfActive;
   final bool Function() _physicalEscapeExitsFullscreen;
@@ -325,6 +345,8 @@ class PlayerNavigationCoordinator {
     required this.dismissPrompt,
     this.isGuideOpen,
     this.closeGuide,
+    this.isSlateOpen,
+    this.dismissSlate,
     required this.isChromePresented,
     required this.exitFullscreenIfActive,
     bool Function()? physicalEscapeExitsFullscreen,
@@ -354,6 +376,13 @@ class PlayerNavigationCoordinator {
     // would consume the press with nothing visible happening.
     if (isGuideOpen?.call() ?? false) {
       closeGuide?.call();
+      return;
+    }
+    // Then the Up-Next slate, when it is one the viewer raised — Back is the same
+    // "not now" as its X. A gap slate never lands here (see [isSlateOpen]), so Back
+    // keeps its normal meaning while a channel is simply between programmes.
+    if (isSlateOpen?.call() ?? false) {
+      dismissSlate?.call();
       return;
     }
     if (navigationKey == PlayerNavigationKey.back && _exitPlayerBeforeChrome()) {
@@ -665,6 +694,31 @@ class PlexVideoControls extends StatefulWidget {
   /// Null outside a switchable GalTV session.
   final void Function(int delta)? onGalTvChannelStep;
 
+  /// Raises the GalTV "Up next" slate.
+  ///
+  /// Wired to the **credits marker's button** in a GalTV session, where skipping
+  /// credits is meaningless: there is no next episode of a live channel, only the
+  /// schedule's next item. Supplying it is also what makes that marker render at
+  /// all — see `_PlexVideoControlsState._skipModeFor`.
+  final VoidCallback? onShowGalTvUpNext;
+
+  /// Whether the GalTV item on screen is a **filler** (an ad).
+  ///
+  /// A filler is a break the viewer is sitting through, so the same Up-Next
+  /// affordance is offered for its whole duration — an ad carries no Plex marker,
+  /// so this is the only signal that the question "what is next" is live.
+  final bool galTvOnFiller;
+
+  /// The programme the tuned channel plays next, so a filler can show what is
+  /// coming in miniature above the UP NEXT button (`GalTvUpNextHint`) instead of
+  /// only after the viewer asks. Null outside GalTV, and whenever the schedule has
+  /// nothing to name.
+  final ValueListenable<GalTvUpNext?>? galTvUpNext;
+
+  /// Plex client the hint resolves the next programme's `clearLogo` through. Null
+  /// is supported — the hint falls back to the programme's title.
+  final MediaServerClient? galTvUpNextClient;
+
   /// The tuned GalTV channel's logo, shown beside the player title. Null outside
   /// GalTV, and for a channel with no icon.
   final String? channelLogoUrl;
@@ -783,6 +837,10 @@ class PlexVideoControls extends StatefulWidget {
     this.isGalTv = false,
     this.onResyncGalTv,
     this.onGalTvChannelStep,
+    this.onShowGalTvUpNext,
+    this.galTvOnFiller = false,
+    this.galTvUpNext,
+    this.galTvUpNextClient,
     this.channelLogoUrl,
     this.logoHeaders,
     this.shaderService,
@@ -912,8 +970,26 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
   // Position subscription for marker tracking
   StreamSubscription<Duration>? _positionSubscription;
   // Skip-marker state
-  SkipMarkerMode _skipModeFor(MediaMarker marker) =>
-      _settings.read(marker.isCredits ? SettingsService.skipCreditsMode : SettingsService.skipIntroMode);
+  /// The skip behaviour for [marker] — with a **GalTV session deliberately
+  /// overriding the viewer's preference**.
+  ///
+  /// Live TV has nothing to skip. An **intro** marker is ignored outright: the
+  /// intro *is* the broadcast here, and the schedule will not move because a
+  /// viewer is impatient. A **credits** marker keeps exactly one affordance, and
+  /// it is not a seek — the button offers the schedule's next programme, because
+  /// what plays next is Tunarr's decision rather than this file's (see
+  /// [onShowGalTvUpNext]).
+  ///
+  /// Neither is ever automatic. `auto` would fire the credits action on a timer,
+  /// and a slate appearing over the picture on its own is a jump scare, not a
+  /// courtesy — the viewer asks for it or does not see it.
+  SkipMarkerMode _skipModeFor(MediaMarker marker) {
+    if (widget.isGalTv) {
+      final offersUpNext = marker.isCredits && widget.onShowGalTvUpNext != null;
+      return offersUpNext ? SkipMarkerMode.button : SkipMarkerMode.off;
+    }
+    return _settings.read(marker.isCredits ? SettingsService.skipCreditsMode : SettingsService.skipIntroMode);
+  }
   int get _autoSkipDelay => _settings.read(SettingsService.autoSkipDelay);
   Timer? _autoSkipTimer;
   final ValueNotifier<double> _autoSkipProgress = ValueNotifier<double>(0.0);
@@ -1293,8 +1369,9 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
                       ),
                     ),
                   ),
-                  // Mobile double-tap zones for skip forward/backward
-                  if (isMobile)
+                  // Mobile double-tap zones for skip forward/backward. An ad has
+                  // no skip affordance, and a tap is one.
+                  if (isMobile && !widget.galTvOnFiller)
                     MobileSkipZones(
                       onTapInSkipZone: (isForward) => _handleTapInSkipZone(isForward: isForward),
                       onLongPressStart: (_) => _handleLongPressStart(),
@@ -1395,6 +1472,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
                                                       hasFirstFrame: widget.hasFirstFrame,
                                                       isTranscoding: widget.isTranscoding,
                                                       isGalTv: widget.isGalTv,
+                                                      galTvOnFiller: widget.galTvOnFiller,
                                                       channelLogoUrl: widget.channelLogoUrl,
                                                       logoHeaders: widget.logoHeaders,
                                                       thumbnailDataBuilder: widget.thumbnailDataBuilder,

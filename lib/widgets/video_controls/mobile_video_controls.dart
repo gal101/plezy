@@ -63,6 +63,14 @@ class MobileVideoControls extends StatefulWidget {
   /// rather than the episode.
   final bool isGalTv;
 
+  /// A GalTV **filler** (an ad) is playing: no seek affordance of any kind.
+  ///
+  /// The phone/TV chrome has no ±10 buttons, so for the timeline it is the same
+  /// rule as [DesktopVideoControls.galTvOnFiller] — and the double-tap skip zones
+  /// are suppressed alongside it in the player's gesture layer, or the ad could
+  /// still be skipped with a tap.
+  final bool galTvOnFiller;
+
   /// The tuned GalTV channel's logo, shown beside the title. Null outside GalTV
   /// and for a channel with no icon.
   final String? channelLogoUrl;
@@ -128,6 +136,7 @@ class MobileVideoControls extends StatefulWidget {
     this.canControl = true,
     this.isTranscoding = false,
     this.isGalTv = false,
+    this.galTvOnFiller = false,
     this.channelLogoUrl,
     this.logoHeaders,
     this.hasFirstFrame,
@@ -392,19 +401,22 @@ class _MobileVideoControlsState extends State<MobileVideoControls> with SingleTi
                   ),
                   const SizedBox(width: 24),
                 ],
-                CircularControlButton(
-                  semanticLabel: isPlaying ? t.videoControls.pauseButton : t.videoControls.playButton,
-                  icon: isPlaying ? Symbols.pause_rounded : Symbols.play_arrow_rounded,
-                  iconSize: 72,
-                  onPressed: () {
-                    widget.onPlayPause();
-                    if (isPlaying) {
-                      widget.onCancelAutoHide?.call();
-                    } else {
-                      widget.onStartAutoHide?.call();
-                    }
-                  },
-                ),
+                // The big play/pause disappears for an ad — the viewer may not
+                // stop it — leaving the channel steps either side of the cluster.
+                if (!widget.galTvOnFiller)
+                  CircularControlButton(
+                    semanticLabel: isPlaying ? t.videoControls.pauseButton : t.videoControls.playButton,
+                    icon: isPlaying ? Symbols.pause_rounded : Symbols.play_arrow_rounded,
+                    iconSize: 72,
+                    onPressed: () {
+                      widget.onPlayPause();
+                      if (isPlaying) {
+                        widget.onCancelAutoHide?.call();
+                      } else {
+                        widget.onStartAutoHide?.call();
+                      }
+                    },
+                  ),
                 if (!widget.isLive) ...[
                   const SizedBox(width: 24),
                   CircularControlButton(
@@ -483,7 +495,8 @@ class _MobileVideoControlsState extends State<MobileVideoControls> with SingleTi
           onScrubStart: widget.onScrubStart,
           onScrubEnd: widget.onScrubEnd,
           horizontalLayout: false,
-          enabled: widget.canControl,
+          // An ad cannot be scrubbed — see [DesktopVideoControls.galTvOnFiller].
+          enabled: widget.canControl && !widget.galTvOnFiller,
           showFinishTime: true,
           thumbnailDataBuilder: widget.thumbnailDataBuilder,
         ),

@@ -245,6 +245,84 @@ void main() {
     expect(persistedSpeeds, [8.0]);
   });
 
+  testWidgets('a seek binding is swallowed, not performed, while an ad plays', (tester) async {
+    final service = await KeyboardShortcutsService.getInstance();
+    addTearDown(service.dispose);
+    final player = _FakePlayer();
+    final seeks = <int>[];
+
+    // ArrowRight is the shipped `seek_forward` binding — one of the several ways
+    // into the playhead that no widget owns, which is why the refusal has to live
+    // on the action rather than on the chrome.
+    KeyEventResult pressSeekForward({required bool canSeek}) => service.handleVideoPlayerKeyEvent(
+      const KeyDownEvent(
+        physicalKey: PhysicalKeyboardKey.arrowRight,
+        logicalKey: LogicalKeyboardKey.arrowRight,
+        timeStamp: Duration.zero,
+      ),
+      player,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      canControlPlayback: true,
+      canNavigateMediaItems: true,
+      canSeek: canSeek,
+      onSeekBy: seeks.add,
+    );
+
+    expect(pressSeekForward(canSeek: true), KeyEventResult.handled);
+    expect(seeks, [10], reason: 'the default binding seeks forward by the small step');
+
+    seeks.clear();
+    expect(
+      pressSeekForward(canSeek: false),
+      KeyEventResult.handled,
+      reason: 'the key is consumed, so it cannot fall through to the route below',
+    );
+    expect(seeks, isEmpty, reason: 'an ad cannot be skipped');
+  });
+
+  testWidgets('play/pause is refused on the keyboard while an ad plays', (tester) async {
+    final service = await KeyboardShortcutsService.getInstance();
+    addTearDown(service.dispose);
+    final player = _FakePlayer();
+    var toggles = 0;
+
+    // Space is the shipped `play_pause` binding; the ad runs to its end, so the
+    // binding must be swallowed rather than acted on.
+    KeyEventResult pressSpace({required bool canTogglePlayback}) => service.handleVideoPlayerKeyEvent(
+      const KeyDownEvent(
+        physicalKey: PhysicalKeyboardKey.space,
+        logicalKey: LogicalKeyboardKey.space,
+        timeStamp: Duration.zero,
+      ),
+      player,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      canControlPlayback: true,
+      canNavigateMediaItems: true,
+      canTogglePlayback: canTogglePlayback,
+      onPlayPause: () => toggles++,
+    );
+
+    expect(pressSpace(canTogglePlayback: true), KeyEventResult.handled);
+    expect(toggles, 1, reason: 'an ordinary programme pauses on Space');
+
+    expect(
+      pressSpace(canTogglePlayback: false),
+      KeyEventResult.handled,
+      reason: 'the key is consumed, so it cannot leak to the route below',
+    );
+    expect(toggles, 1, reason: 'an ad cannot be stopped');
+  });
+
   testWidgets('Ctrl+S takes a screenshot once while held', (tester) async {
     final service = await KeyboardShortcutsService.getInstance();
     addTearDown(service.dispose);

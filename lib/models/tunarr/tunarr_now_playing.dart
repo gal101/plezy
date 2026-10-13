@@ -5,7 +5,7 @@ import 'dart:convert';
 ///
 /// There is deliberately no `externalId` here — the Plex rating key lives on
 /// the program endpoint and is resolved separately by
-/// `TunarrClient.fetchPlexRatingKey`.
+/// `TunarrClient.fetchProgramRef`.
 class TunarrNowPlaying {
   final int serverTimeMs;
   final TunarrPlaybackItem? current;

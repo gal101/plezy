@@ -22,6 +22,7 @@ import 'package:plezy/widgets/video_controls/player_chrome_controller.dart';
 import 'package:plezy/widgets/video_controls/video_controls.dart';
 import 'package:plezy/widgets/video_controls/widgets/player_toast_indicator.dart';
 import 'package:plezy/widgets/video_controls/widgets/skip_marker_button.dart';
+import 'package:plezy/widgets/video_controls/widgets/timeline_slider.dart';
 import 'package:plezy/focus/dpad_navigator.dart';
 
 import '../test_helpers/media_items.dart';
@@ -49,6 +50,10 @@ void main() {
   late SettingsService settings;
   late FocusNode screenFocusNode;
   var toggles = 0;
+
+  /// How many times the GalTV "UP NEXT" affordance was activated — the surface
+  /// Select path and the button's own action both run through it.
+  var upNextOpens = 0;
 
   /// What the player screen would have done with each Back that escaped the
   /// controls. The harness cannot run the real staged chain, so it records the
@@ -84,6 +89,7 @@ void main() {
     hasFirstFrame = ValueNotifier<bool>(true);
     screenFocusNode = FocusNode(debugLabel: 'VideoPlayerScreen');
     toggles = 0;
+    upNextOpens = 0;
     screenBackDispositions.clear();
     screenBackKeyDowns = 0;
   });
@@ -152,6 +158,9 @@ void main() {
     TargetPlatform platform = TargetPlatform.windows,
     bool canControl = true,
     bool playbackPromptOpen = false,
+    bool galTv = false,
+    bool galTvOnFiller = false,
+    VoidCallback? onShowGalTvUpNext,
   }) async {
     await tester.pumpWidget(shell(const SizedBox.expand(), platform: platform));
     await tester.pump();
@@ -171,6 +180,9 @@ void main() {
           canNavigateMediaItems: false,
           canControl: canControl,
           playbackPromptOpen: playbackPromptOpen,
+          isGalTv: galTv,
+          galTvOnFiller: galTvOnFiller,
+          onShowGalTvUpNext: onShowGalTvUpNext,
           onPlayPauseRequested: (_) async => toggles++,
         ),
       ),
@@ -199,6 +211,9 @@ void main() {
     TargetPlatform platform = TargetPlatform.windows,
     bool canControl = true,
     bool playbackPromptOpen = false,
+    bool galTv = false,
+    bool galTvOnFiller = false,
+    VoidCallback? onShowGalTvUpNext,
   }) {
     testWidgets(description, (tester) async {
       await pumpPlayer(
@@ -207,6 +222,9 @@ void main() {
         platform: platform,
         canControl: canControl,
         playbackPromptOpen: playbackPromptOpen,
+        galTv: galTv,
+        galTvOnFiller: galTvOnFiller,
+        onShowGalTvUpNext: onShowGalTvUpNext,
       );
       await body(tester);
       chrome.cancelAutoHide();
@@ -320,6 +338,85 @@ void main() {
 
       expect(currentMode(tester), InputMode.pointer, reason: 'a hidden-chrome seek is not navigation');
       expect(chrome.controlsVisible, isFalse);
+    });
+  });
+
+  // The owner's TV report, 2026-10-09: *"cant open the up next screen, and dpad
+  // navigation is fucked when watching an ad. going up to the seekbar the seekbar
+  // gets selected then dpad is stuck cant do anything, cant open the upnext
+  // screen, and i try by pushing select/ok button on remote but doesnt do
+  // anything"*. Two faults, both only reachable with a remote:
+  //
+  // 1. Select on the surface was routed to the **marker** action. An ad carries no
+  //    marker, so `_skipMarker` hit its own guard and returned — the press did
+  //    nothing at all, and never raised the slate.
+  // 2. UP always targeted the timeline, even in an ad, where the disabled slider
+  //    keeps its focus node but drops its key handler: the remote landed on a
+  //    control that could not be used *or* left.
+  group('an ad on a TV', () {
+    playerTest(
+      'Select on the surface opens the up-next slate instead of doing nothing',
+      galTv: true,
+      galTvOnFiller: true,
+      onShowGalTvUpNext: () => upNextOpens++,
+      (tester) async {
+        expect(find.byType(SkipMarkerButton), findsOneWidget, reason: 'precondition: UP NEXT is the slot');
+        expect(chrome.controlsVisible, isFalse);
+
+        await press(tester, LogicalKeyboardKey.select);
+
+        expect(upNextOpens, 1, reason: 'the pill under the picture is the action Select must take');
+        expect(
+          chrome.controlsVisible,
+          isFalse,
+          reason: 'the slate answers the press; raising the OSD instead would hide the pill',
+        );
+        expect(focusLabel(), 'PlayerSurface');
+      },
+    );
+
+    playerTest(
+      'UP from the transport row lands on UP NEXT, not on the locked seek bar',
+      galTv: true,
+      galTvOnFiller: true,
+      onShowGalTvUpNext: () => upNextOpens++,
+      (tester) async {
+        await setNavigationEnabled(true);
+        chrome.show();
+        await tester.pumpAndSettle();
+
+        // First UP hands the row the remote (Play/Pause is unmounted in an ad, so
+        // the walk lands on the first mounted control); the second is the row's
+        // own UP, which is the one under test.
+        await press(tester, LogicalKeyboardKey.arrowUp);
+        expect(focusLabel(), 'PrevItem', reason: 'precondition: the remote is on the transport row');
+
+        await press(tester, LogicalKeyboardKey.arrowUp);
+
+        expect(
+          focusLabel(),
+          'SkipMarkerButton',
+          reason: 'the slot above the row is usable; the timeline is not, so it must never take the remote',
+        );
+        expect(
+          tester.widget<TimelineSlider>(find.byType(TimelineSlider)).focusNode?.canRequestFocus,
+          isFalse,
+          reason: 'and the locked seek bar refuses focus even if something else asks for it',
+        );
+      },
+    );
+
+    playerTest('on a programme UP still reaches the timeline', galTv: true, (tester) async {
+      await setNavigationEnabled(true);
+      chrome.show();
+      await tester.pumpAndSettle();
+
+      await press(tester, LogicalKeyboardKey.arrowUp);
+      expect(focusLabel(), 'PlayPause', reason: 'precondition: a programme has a play/pause to land on');
+
+      await press(tester, LogicalKeyboardKey.arrowUp);
+
+      expect(focusLabel(), 'Timeline', reason: 'a live seek bar keeps the behaviour it had');
     });
   });
 

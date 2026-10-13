@@ -2,29 +2,23 @@
 # Build (optionally) and install the GalTV APK onto the connected Android
 # devices — the TV and the phone — picking the right ABI per device.
 #
-# Why per-device ABIs: the Google TV Streamer is **32-bit only**
-# (`ro.product.cpu.abilist = armeabi-v7a,armeabi`, `ro.zygote = zygote32`), so an
-# arm64-only APK installs and then dies on its first frame, looking for
-# `libflutter.so` in `armeabi-v7a`. The phone (Honor Magic V5) is arm64. The
-# release APK is therefore built `--split-per-abi` and this script picks the file
-# that matches each device's own `abilist`.
+# Device ABIs vary: a TV device may be arm32-only while a phone may be arm64.
+# An arm64-only APK cannot run on an arm32-only device, so this script builds
+# split-per-ABI packages and selects the matching one for each connected device.
 #
 # Usage:
 #   scripts/deploy_android.sh                     # install to every ready device
 #   scripts/deploy_android.sh --build             # build first, then install
-#   scripts/deploy_android.sh --device 192.168.100.154:5555
-#   scripts/deploy_android.sh --connect 192.168.100.154:5555   # adb connect first
+#   scripts/deploy_android.sh --device "$ANDROID_ADB_ADDRESS"
+#   scripts/deploy_android.sh --connect "$ANDROID_ADB_ADDRESS"   # connect first
 #   scripts/deploy_android.sh --force             # install even if unchanged
 #   scripts/deploy_android.sh --list              # show what it would do
 #
-# The TV's address is DHCP; reserve it on the router (see
-# `docs/server-setup-guide.md` §4). The pairing key lives on the device, so a
-# code is only needed once — after a TV reboot, re-run with `--connect`.
+# Set ANDROID_ADB_ADDRESS locally to the current device endpoint when needed;
+# do not commit that value. ADB pairing keys remain on the device.
 #
-# Tool paths: this box has `adb` from a WinGet package and Flutter in a twin SDK,
-# and the shell it runs in may see either Windows-style (`/c/...`) or WSL-style
-# (`/mnt/c/...`) paths with a different PATH. So both are resolved below, and an
-# `.exe` adb gets native Windows paths (WSL does not translate arguments for you).
+# Tool paths vary by workstation and shell. The resolver checks PATH, standard
+# SDK locations, and wildcard-based Windows/WSL locations without machine names.
 
 set -euo pipefail
 
@@ -126,9 +120,8 @@ while read -r serial; do
     continue
   fi
 
-  # One device can be reachable over several transports at once (the TV shows up
-  # as both `192.168.100.154:5555` and its mDNS `…_adb-tls-connect._tcp` name),
-  # so install once per physical device.
+  # One physical device can appear under several ADB transports, such as a
+  # network serial and an mDNS alias; install only once per device.
   hardware="$("$ADB" -s "$serial" shell getprop ro.serialno 2>/dev/null | tr -d '\r')"
   [ -n "$hardware" ] || hardware="$serial"
   case " $seen_devices " in
@@ -172,6 +165,6 @@ while read -r serial; do
 done <<< "$("$ADB" devices | tr -d '\r' | awk 'NR>1 && $2 == "device" {print $1}')"
 
 if [ "$found" -eq 0 ]; then
-  echo "no ready device. TV: re-run with --connect 192.168.100.154:5555 (see docs/server-setup-guide.md §4)" >&2
+  echo "no ready device. Set ANDROID_ADB_ADDRESS locally and retry with --connect \"\$ANDROID_ADB_ADDRESS\" (see docs/server-setup-guide.md §4)" >&2
   exit 1
 fi

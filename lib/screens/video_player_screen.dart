@@ -30,6 +30,7 @@ import '../models/livetv_channel.dart';
 import '../models/galtv/galtv_guide.dart';
 import '../models/galtv/galtv_session_args.dart';
 import '../services/galtv/galtv_tuner.dart';
+import '../models/tunarr/tunarr_channel.dart';
 import '../services/live_seek_accumulator.dart';
 import '../services/plex_client.dart';
 import '../services/jellyfin_client.dart';
@@ -122,6 +123,7 @@ import 'video_player/visual_effects_controller.dart';
 import 'video_player/widgets/player_prompt_overlays.dart';
 import '../widgets/overlay_sheet.dart';
 import '../widgets/galtv/galtv_guide_overlay.dart';
+import '../widgets/galtv/galtv_up_next_overlay.dart';
 import '../widgets/video_controls/player_chrome_controller.dart';
 import '../widgets/video_controls/video_controls.dart';
 import '../widgets/video_controls/widgets/player_toast_indicator.dart';
@@ -851,6 +853,39 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
   /// round trips, and mashing a channel button must not stack reloads.
   bool _galTvSwitching = false;
 
+  /// The item Tunarr already named as the one that follows the item on screen,
+  /// taken from the same read that produced the current plan, plus the local
+  /// instant it falls due. The channel is followed at *item* level and the arm is
+  /// played at the boundary **instead of** re-reading `native-playback`, because
+  /// each read records the filler it predicts for a future instant — re-asking is
+  /// what starves the breaks (see `GalTvTuneResult`).
+  GalTvItemStep? _galTvArmed;
+  DateTime? _galTvArmedDueAt;
+
+  /// Bumped whenever the session adopts a channel or a switch starts. A gap hold
+  /// is a minutes-long async loop, so it must be retireable: it captures this at
+  /// entry and gives up when it changes, or it would keep its old channel's slate
+  /// and armed ad after the viewer moved on (owner report, 2026-10-08).
+  int _galTvChainGeneration = 0;
+
+  /// Whether the slate on screen was raised **by the viewer** (the credits
+  /// button) rather than by a gap.
+  ///
+  /// Only a viewer-raised slate carries a close button. A gap slate *is* what the
+  /// channel is showing — dismissing it would leave a parked picture and a viewer
+  /// with nothing to look at until the schedule moved on — whereas the credits
+  /// slate sits on top of something still playing, so closing it is a real
+  /// choice. Declared here rather than in `parts/galtv.dart` because that file is
+  /// an *extension*, and extensions cannot hold state.
+  bool _galTvUpNextDismissible = false;
+
+  /// Whether the GalTV item currently on screen is a **filler** (an ad), rather
+  /// than a programme. Drives the chrome's Up-Next affordance: on a live channel an
+  /// ad plays like anything else, but the viewer is watching a *break*, and "what
+  /// is next" is the question a break raises. Set from
+  /// `GalTvTunePlan.isFiller` in `_applyGalTvPlan`.
+  bool _galTvItemIsFiller = false;
+
   /// Bumped per guide fetch so a switch that lands mid-fetch supersedes the
   /// in-flight one instead of being dropped — stale rows would keep marking the
   /// channel we just left as "now".
@@ -1421,6 +1456,11 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
       // layer and Back would do visibly nothing.
       isGuideOpen: () => widget.galTv?.guideVisible.value ?? false,
       closeGuide: _closeGalTvGuide,
+      // Back on a TV does what the slate's X does — for the same slate the X
+      // belongs to. A gap slate is not dismissible, so it is not offered here and
+      // Back keeps its normal meaning for it.
+      isSlateOpen: () => _galTvUpNextDismissible && widget.galTv?.upNext.value != null,
+      dismissSlate: _dismissGalTvUpNext,
     );
 
     _currentMetadata = widget.metadata;
@@ -1516,6 +1556,11 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
     // every other route.
     widget.galTv?.guideVisible.addListener(_handleGalTvGuideVisibilityChanged);
 
+    // The slate has no toggle of its own — it appears when the schedule has
+    // nothing to play — so the screen listens for it to hold the chrome while it
+    // owns the remote (see [_handleGalTvUpNextChanged]).
+    widget.galTv?.upNext.addListener(_handleGalTvUpNextChanged);
+
     // Seed the live channel identity from the launched session before any guide
     // fetch can run, so the first grid marks the right "now".
     final galTv = widget.galTv;
@@ -1525,6 +1570,26 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
       _galTvChannelName = galTv.channelName;
       _galTvChannelLogoUrl = galTv.channelLogoUrl;
       _galTvLogoHeaders = galTv.logoHeaders;
+      // The launched item may already *be* an ad — a channel tuned mid-break. The
+      // route is opened from a Plex item and a seek offset, so this seed is the
+      // only place that state can arrive from.
+      _galTvItemIsFiller = galTv.isFiller;
+      // The miniature hint above UP NEXT is offered on the **first** item of a
+      // session as well — the whole of an ad, or the credits of the film the
+      // viewer joined mid-way — and this seed is the only thing that runs before
+      // the first boundary: every other refresh rides `_markGalTvItemFiller`,
+      // which is reached from a plan that is applied or opened, and launching is
+      // neither. Without this the payload stayed null until the second item, so
+      // the button appeared with no wordmark and no start time under it.
+      unawaited(_refreshGalTvNextHint());
+      // The launching read named the item that follows the one being opened:
+      // starting the route armed means the first boundary of the session costs no
+      // read at all.
+      final armedIn = galTv.armedIn;
+      if (galTv.armedNext != null && armedIn != null) {
+        _galTvArmed = galTv.armedNext;
+        _galTvArmedDueAt = DateTime.now().add(armedIn);
+      }
     }
 
     _sleepTimerSubscription = SleepTimerService().onPrompt.listen((_) {
@@ -2544,6 +2609,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
 
     _screenFocusNode.removeListener(_onScreenFocusChanged);
     widget.galTv?.guideVisible.removeListener(_handleGalTvGuideVisibilityChanged);
+    widget.galTv?.upNext.removeListener(_handleGalTvUpNextChanged);
     HardwareKeyboard.instance.removeHandler(_primeInitializationNavigationFocus);
     _screenFocusNode.dispose();
 

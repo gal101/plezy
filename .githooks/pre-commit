@@ -18,4 +18,6 @@ if git diff --cached --quiet; then
 fi
 
 ROOT="$(git rev-parse --show-toplevel)"
+python "$ROOT/scripts/check_staged_privacy.py"
+
 exec "$ROOT/scripts/ci_checks.sh"

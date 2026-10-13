@@ -29,6 +29,13 @@ class MainScreenFocusScope extends InheritedModel<MainScreenScopeAspect> {
   final void Function(String libraryGlobalKey)? selectLibrary;
   final VoidCallback? openSettings;
 
+  /// Opens the GalTV tab tuned to [channelId]'s live position.
+  ///
+  /// A Home shelf card can neither switch the shell's tab nor write a pref, so
+  /// it asks the shell — the sibling of the `GalTvScreen(onExitToHome:)`
+  /// callback the fork already needed in the other direction.
+  final void Function(String channelId)? openGalTvChannel;
+
   const MainScreenFocusScope({
     super.key,
     required this.focusSidebar,
@@ -39,6 +46,7 @@ class MainScreenFocusScope extends InheritedModel<MainScreenScopeAspect> {
     this.viewportWidth,
     this.selectLibrary,
     this.openSettings,
+    this.openGalTvChannel,
     required super.child,
   });
 
@@ -54,6 +62,12 @@ class MainScreenFocusScope extends InheritedModel<MainScreenScopeAspect> {
   /// Focuses the sidebar without registering an inherited dependency.
   static void focusSidebarOf(BuildContext context) {
     of(context, listen: false)?.focusSidebar();
+  }
+
+  /// Opens the GalTV tab on [channelId] without registering an inherited
+  /// dependency. A no-op when no shell is above (a bare screen, e.g. in a test).
+  static void openGalTvChannelOf(BuildContext context, String channelId) {
+    of(context, listen: false)?.openGalTvChannel?.call(channelId);
   }
 
   static MainScreenFocusScope? _dependOn(BuildContext context, MainScreenScopeAspect aspect) {

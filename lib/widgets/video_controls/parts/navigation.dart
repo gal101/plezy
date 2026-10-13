@@ -40,6 +40,10 @@ extension _PlexVideoControlsNavigationMethods on _PlexVideoControlsState {
         hasFirstFrame: widget.hasFirstFrame,
         isTranscoding: widget.isTranscoding,
         isGalTv: widget.isGalTv,
+        galTvOnFiller: widget.galTvOnFiller,
+        // UP from the transport row lands here when the timeline cannot take
+        // focus (an ad) — see `DesktopVideoControls.focusUpTarget`.
+        focusUpTarget: _skipMarkerFocusNode,
         channelLogoUrl: widget.channelLogoUrl,
         logoHeaders: widget.logoHeaders,
         thumbnailDataBuilder: widget.thumbnailDataBuilder,

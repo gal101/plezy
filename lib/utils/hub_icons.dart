@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import '../media/media_hub.dart';
+import '../services/galtv/galtv_home_shelves.dart';
 
 /// Leading icon for a hub row, shared by every surface that renders hubs from
 /// the same backend rows (Discover and a library's Recommended tab).
@@ -16,6 +17,14 @@ IconData hubIconFor(MediaHub hub) {
 
   if (hub.isContinueWatchingHub || title.contains('continue watching') || title.contains('on deck')) {
     return Symbols.play_circle_rounded;
+  }
+  // The GalTV shelves are matched on their synthesized ids, not their titles:
+  // the titles are localized, the ids are not.
+  if (hub.identifier == galTvFavoritesHubId || hub.id == galTvFavoritesHubId) {
+    return Symbols.star_rounded;
+  }
+  if (hub.identifier == galTvAllChannelsHubId || hub.id == galTvAllChannelsHubId) {
+    return Symbols.live_tv_rounded;
   }
   for (final (keywords, icon) in _titleKeywordIcons) {
     if (keywords.any(title.contains)) return icon;

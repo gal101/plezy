@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_symbols_icons/symbols.dart';
 import 'package:plezy/i18n/strings.g.dart';
 import 'package:plezy/models/galtv/galtv_guide.dart';
 import 'package:plezy/theme/mono_theme.dart';
 import 'package:plezy/widgets/galtv/galtv_guide_overlay.dart';
+import 'package:plezy/widgets/optimized_media_image.dart';
 
 /// Fixtures shaped like a real Tunarr lineup: a long feature, a short `flex`
 /// break, and a normal programme — the mix that has to stay legible.
@@ -78,8 +80,107 @@ Widget _app({
   ),
 );
 
+/// Every backdrop source currently mounted in the grid.
+///
+/// The only way to observe the fallback chain without a golden: the cell swaps the
+/// *source* it asks for, so this reads which one is on the tree.
+List<String> _backdropPaths(WidgetTester tester) => tester
+    .widgetList<OptimizedMediaImage>(find.byType(OptimizedMediaImage))
+    .map((image) => image.imagePath ?? '')
+    .toList();
+
 void main() {
   setUpAll(() => LocaleSettings.setLocaleSync(AppLocale.en));
+
+  /// A film's backdrop is its own Plex item's `art`. An episode's is not: Plex
+  /// keeps the backdrop on the *show*, so there is no `art` under the episode's own
+  /// key at all — Tunarr's program payload for one lists `poster` and `banner` and
+  /// nothing else (verified live 2026-10-08 on `TEST2` / Severance "Good News About
+  /// Hell", `externalId` 3747). A TV row therefore came out as plain fill, which is
+  /// the owner's report. The cell now falls through to the episode's own `thumb` —
+  /// a per-episode still, and the better answer anyway.
+  ///
+  /// This harness passes no Plex client, which is the same code path as a 404: the
+  /// image widget hands `UnresolvedImageUrl` to its `errorWidget`, and the cell
+  /// takes that as "try the next source". The assertion is about the order of the
+  /// attempts, not about pixels.
+  testWidgets('a cell with Plex identity tries the backdrop, then the thumb', (tester) async {
+    final now = DateTime.now();
+    await tester.pumpWidget(
+      _app(
+        rows: [
+          GalTvGuideRow(
+            channelId: 'tv',
+            channelNumber: '4',
+            channelName: 'TEST2',
+            entries: [
+              GalTvGuideEntry(
+                title: 'Good News About Hell',
+                start: now.subtract(const Duration(minutes: 5)),
+                stop: now.add(const Duration(minutes: 45)),
+                ratingKey: '3747',
+                isPlayable: true,
+                isCurrent: true,
+              ),
+            ],
+          ),
+        ],
+        currentChannelId: 'tv',
+      ),
+    );
+
+    expect(_backdropPaths(tester), contains('/library/metadata/3747/art'));
+
+    await tester.pump();
+    await tester.pump();
+
+    expect(_backdropPaths(tester), contains('/library/metadata/3747/thumb'));
+  });
+
+  /// A `flex` slot carries no programme, so the cell has nothing of its own to
+  /// draw — it used to be an empty rectangle the owner read as a failed load. It
+  /// now names itself and shows how long it runs. Only breaks longer than 30
+  /// minutes ever reach the client at all (Tunarr folds the rest into the
+  /// programme before them — `AGENT.md` §5), so this is always a real ad break.
+  testWidgets('a flex cell is labelled as an ad break, with its glyph and length', (tester) async {
+    final now = DateTime.now();
+    await tester.pumpWidget(
+      _app(
+        rows: [
+          GalTvGuideRow(
+            channelId: 'ch-4',
+            channelNumber: '4',
+            channelName: 'TEST2',
+            entries: [
+              GalTvGuideEntry(
+                title: '',
+                start: now,
+                stop: now.add(const Duration(minutes: 55)),
+                isPlayable: false,
+                isCurrent: false,
+                isBreak: true,
+              ),
+              GalTvGuideEntry(
+                title: 'The Head',
+                start: now.add(const Duration(minutes: 55)),
+                stop: now.add(const Duration(minutes: 115)),
+                isPlayable: true,
+                isCurrent: true,
+              ),
+            ],
+          ),
+        ],
+        currentChannelId: 'ch-4',
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Ad Break'), findsOneWidget);
+    expect(find.byIcon(Symbols.campaign_rounded), findsOneWidget, reason: 'the break carries a glyph');
+    expect(find.text('55min'), findsOneWidget, reason: 'and how long it runs');
+    // The programme beside it is untouched: its own title, no ad glyph.
+    expect(find.text('The Head'), findsOneWidget);
+  });
 
   testWidgets('marks the tuned channel, and every channel that is airing now', (tester) async {
     final now = DateTime.now();

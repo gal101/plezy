@@ -2243,7 +2243,15 @@
     "galtvToggle": "GalTV tab",
     "galtvToggleSubtitle": "Show the GalTV tab in the navigation",
     "galtvOverridesLiveTv": "GalTV tab overrides Live TV",
-    "galtvOverridesLiveTvSubtitle": "Hide the Live TV tab while GalTV is available. Turn this off to keep both tabs."
+    "galtvOverridesLiveTvSubtitle": "Hide the Live TV tab while GalTV is available. Turn this off to keep both tabs.",
+    "galtvHideAds": "Hide ads",
+    "galtvHideAdsSubtitle": "Never play filler. A break waits on the Up Next screen instead, and the next programme still starts at its scheduled time.",
+    "previewUpNext": "Preview the Up Next screen",
+    "previewUpNextSubtitle": "See the break screen as the player draws it, with artwork and without.",
+    "favoriteChannels": "Favourite channels",
+    "favoriteChannelsSubtitle": "Choose the channels that appear on Home",
+    "favoriteChannelsSearch": "Search by number or name",
+    "favoriteChannelsEmpty": "No channels match"
   },
   "galtv": {
     "tabTitle": "GalTV",
@@ -2258,7 +2266,23 @@
     "nextChannel": "Channel +",
     "tuning": "Tuning…",
     "watching": "Watching",
-    "nowBadge": "NOW"
+    "nowBadge": "NOW",
+    "upNext": "UP NEXT",
+    "startsAt": "Starts at ${time}",
+    "guide": "TV Guide",
+    "browseChannels": "Channels",
+    "shelfAllChannels": "Live now",
+    "shelfFavorites": "Favourite channels",
+    "channelLine": "CH ${number} · ${name}",
+    "adBreak": "Ad Break",
+    "preview": {
+      "title": "Up Next preview",
+      "live": "Live",
+      "noLogo": "No logo",
+      "noMedia": "No Plex metadata",
+      "long": "Long synopsis",
+      "intro": "Renders the break screen exactly as the player and the tab do. Live asks the tuned channel for its real next programme."
+    }
   },
   "services": {
     "title": "Services",

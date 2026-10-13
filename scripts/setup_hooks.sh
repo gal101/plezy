@@ -8,7 +8,7 @@ git config core.hooksPath .githooks
 
 cat <<EOF
 Git hooks installed.
-  pre-commit  runs the CI analyze pipeline (format + analyze + unused code + unused files)
+  pre-commit  checks staged privacy-sensitive data, then runs the CI analyze pipeline
 
 Bypass once:  git commit --no-verify
 Bypass env:   SKIP_HOOKS=1 git commit ...

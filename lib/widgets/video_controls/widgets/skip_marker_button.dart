@@ -9,7 +9,9 @@ import '../../../theme/mono_tokens.dart';
 import '../../app_icon.dart';
 
 class SkipMarkerButton extends StatelessWidget {
-  final MediaMarker marker;
+  /// The marker being offered, or null for the GalTV filler case, where the slot
+  /// offers the next programme and there is no marker to describe.
+  final MediaMarker? marker;
   final Duration playerDuration;
   final bool hasNextEpisode;
   final bool isAutoSkipActive;
@@ -22,7 +24,7 @@ class SkipMarkerButton extends StatelessWidget {
 
   const SkipMarkerButton({
     super.key,
-    required this.marker,
+    this.marker,
     required this.playerDuration,
     required this.hasNextEpisode,
     required this.isAutoSkipActive,
@@ -32,16 +34,28 @@ class SkipMarkerButton extends StatelessWidget {
     required this.focusNode,
     required this.onActivate,
     required this.onFocusDown,
+    this.galTvUpNext = false,
   });
+
+  /// Renders the **GalTV "Up next"** affordance instead of a skip prompt.
+  ///
+  /// Same slot in the chrome, different question: on a live channel the credits
+  /// are not something to skip past — there is no next episode of a channel, only
+  /// whatever the schedule holds next. So the label becomes the slate's own name
+  /// and the countdown is suppressed (a live channel never auto-fires this).
+  final bool galTvUpNext;
 
   @override
   Widget build(BuildContext context) {
-    final isCredits = marker.isCredits;
+    final isCredits = marker?.isCredits ?? false;
     final creditsAtEnd =
-        isCredits && playerDuration > Duration.zero && (playerDuration - marker.endTime).inMilliseconds <= 1000;
+        isCredits && playerDuration > Duration.zero && (playerDuration - marker!.endTime).inMilliseconds <= 1000;
+    // Only a marker can end at the file's end; the GalTV filler slot never does.
     final showNextEpisode = creditsAtEnd && hasNextEpisode;
     String baseButtonText;
-    if (showNextEpisode) {
+    if (galTvUpNext) {
+      baseButtonText = t.galtv.upNext;
+    } else if (showNextEpisode) {
       baseButtonText = t.videoControls.nextEpisode;
     } else if (isCredits) {
       baseButtonText = t.videoControls.skipCredits;
@@ -53,11 +67,15 @@ class SkipMarkerButton extends StatelessWidget {
         ? (autoSkipDelay - (autoSkipProgress * autoSkipDelay)).ceil().clamp(0, autoSkipDelay)
         : 0;
 
-    final showAutoSkipCountdown = isAutoSkipActive && shouldShowAutoSkip;
+    final showAutoSkipCountdown = !galTvUpNext && isAutoSkipActive && shouldShowAutoSkip;
     final buttonText = showAutoSkipCountdown && remainingSeconds > 0
         ? '$baseButtonText ($remainingSeconds)'
         : baseButtonText;
-    final buttonIcon = showNextEpisode ? Symbols.skip_next_rounded : Symbols.fast_forward_rounded;
+    final buttonIcon = galTvUpNext
+        ? Symbols.play_circle_rounded
+        : showNextEpisode
+        ? Symbols.skip_next_rounded
+        : Symbols.fast_forward_rounded;
 
     return FocusableWrapper(
       focusNode: focusNode,
